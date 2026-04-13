@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}信息流 - 微信文章阅读器{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>信息流</h1>
+    <button class="btn btn-small btn-outline" id="refreshBtn" onclick="refreshFeed()">刷新文章</button>
+</div>
+
+<div id="feedContainer"></div>
+<div class="load-more-trigger" id="loadMoreTrigger"></div>
+<div class="loading" id="loadingIndicator" style="display:none;">
+    <div class="loading-spinner"></div>
+    <div>加载中...</div>
+</div>
+<div class="empty-state" id="emptyState" style="display:none;">
+    <p>还没有关注任何公众号</p>
+    <p style="margin-top:8px;"><a href="{{ url_for('accounts_page') }}">去关注公众号</a></p>
+</div>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentPage = 1;
+let isLoading = false;
+let hasMore = true;
+
+function formatTime(ts) {
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + '小时前';
+    if (diff < 604800) return Math.floor(diff / 86400) + '天前';
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    if (d.getFullYear() === now.getFullYear()) return month + '月' + day + '日';
+    return d.getFullYear() + '年' + month + '月' + day + '日';
+}
+
+function showToast(msg, duration) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), duration || 2000);
+}
+
+function renderArticle(art) {
+    const card = document.createElement('div');
+    card.className = 'article-card' + (art.is_read ? ' read' : '');
+    card.onclick = () => openArticle(art);
+
+    let coverHtml = '';
+    if (art.cover) {
+        coverHtml = `<img class="article-cover" src="${art.cover}" loading="lazy" onerror="this.style.display='none'">`;
+    }
+
+    card.innerHTML = `
+        <div class="article-info">
+            <div class="article-title">${art.title}</div>
+            <div class="article-meta">
+                ${art.account_avatar ? `<img class="account-avatar" src="${art.account_avatar}" onerror="this.style.display='none'">` : ''}
+                <span>${art.account_name}</span>
+                <span>${formatTime(art.create_time)}</span>
+            </div>
+        </div>
+        ${coverHtml}
+    `;
+    return card;
+}
+
+function openArticle(art) {
+    // Record history
+    fetch('/api/history/record', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({article_id: art.id}),
+    });
+
+    // Mark as read visually
+    art.is_read = true;
+
+    window.open(art.link, '_blank');
+}
+
+async function loadFeed(page) {
+    if (isLoading || !hasMore) return;
+    isLoading = true;
+    document.getElementById('loadingIndicator').style.display = 'block';
+
+    try {
+        const resp = await fetch(`/api/feed?page=${page}`);
+        const data = await resp.json();
+
+        if (page === 1 && data.articles.length === 0) {
+            document.getElementById('emptyState').style.display = 'block';
+            hasMore = false;
+            return;
+        }
+
+        const container = document.getElementById('feedContainer');
+        data.articles.forEach(art => {
+            container.appendChild(renderArticle(art));
+        });
+
+        hasMore = data.has_more;
+        currentPage = page;
+    } catch (e) {
+        showToast('加载失败，请稍后重试');
+    } finally {
+        isLoading = false;
+        document.getElementById('loadingIndicator').style.display = 'none';
+    }
+}
+
+async function refreshFeed() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = '刷新中...';
+
+    try {
+        const resp = await fetch('/api/feed/refresh', {method: 'POST'});
+        const data = await resp.json();
+        if (data.need_wx_login) {
+            showToast('请先扫码登录微信');
+            return;
+        }
+        // Reload the feed from scratch
+        currentPage = 1;
+        hasMore = true;
+        document.getElementById('feedContainer').innerHTML = '';
+        document.getElementById('emptyState').style.display = 'none';
+        await loadFeed(1);
+        showToast(data.fetched > 0 ? `获取了 ${data.fetched} 篇新文章` : '没有新文章');
+    } catch (e) {
+        showToast('刷新失败');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '刷新文章';
+    }
+}
+
+// Infinite scroll with IntersectionObserver
+const observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && !isLoading && hasMore) {
+        loadFeed(currentPage + 1);
+    }
+}, {rootMargin: '200px'});
+
+observer.observe(document.getElementById('loadMoreTrigger'));
+
+// Initial load
+loadFeed(1);
+</script>
+{% endblock %}

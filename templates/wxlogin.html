@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}微信登录 - 微信文章阅读器{% endblock %}
+
+{% block content %}
+<div class="wx-login-page">
+    <h2>微信公众号平台登录</h2>
+    <p class="desc">
+        需要登录微信公众号后台才能获取文章<br>
+        使用微信扫描下方二维码登录你的个人公众号<br>
+        登录后约4天内无需重新登录
+    </p>
+
+    <div id="statusSection">
+        <div id="wxStatus" style="margin-bottom:20px;"></div>
+    </div>
+
+    <div id="qrcodeSection" style="display:none;">
+        <div class="qrcode-container">
+            <img id="qrcodeImg" alt="QR Code">
+        </div>
+        <div id="scanStatus"></div>
+    </div>
+
+    <button class="btn btn-primary" id="loginBtn" onclick="startLogin()">获取登录二维码</button>
+
+    <div style="margin-top:24px; padding:16px; background:var(--card-bg); border-radius:8px; text-align:left;">
+        <p style="font-size:0.8125rem; font-weight:500; margin-bottom:8px;">使用说明：</p>
+        <ol style="font-size:0.75rem; color:var(--text-secondary); line-height:1.8; padding-left:20px;">
+            <li>你需要有一个微信公众号（个人订阅号即可，可免费注册）</li>
+            <li>点击上方按钮获取二维码</li>
+            <li>用绑定了该公众号的微信扫描二维码</li>
+            <li>在手机上确认登录</li>
+            <li>登录成功后即可搜索和关注其他公众号获取文章</li>
+        </ol>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let pollTimer = null;
+
+function showToast(msg, duration) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), duration || 2000);
+}
+
+async function checkWxStatus() {
+    try {
+        const resp = await fetch('/api/wx/status');
+        const data = await resp.json();
+        const el = document.getElementById('wxStatus');
+        if (data.logged_in) {
+            el.innerHTML = '<span class="status-badge success">微信已登录 ✓</span>';
+            if (data.session_info && data.session_info.expires_at) {
+                const exp = new Date(data.session_info.expires_at);
+                el.innerHTML += `<p style="font-size:0.75rem;color:var(--text-secondary);margin-top:8px;">会话有效至: ${exp.toLocaleString('zh-CN')}</p>`;
+            }
+        } else {
+            el.innerHTML = '<span class="status-badge waiting">微信未登录</span>';
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function startLogin() {
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.textContent = '加载中...';
+
+    try {
+        // Load QR code
+        const resp = await fetch('/api/wx/qrcode');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+
+        document.getElementById('qrcodeImg').src = url;
+        document.getElementById('qrcodeSection').style.display = 'block';
+        document.getElementById('scanStatus').innerHTML = '<span class="status-badge waiting">等待扫码...</span>';
+
+        btn.textContent = '刷新二维码';
+        btn.disabled = false;
+
+        // Start polling scan status
+        startPolling();
+    } catch (e) {
+        showToast('获取二维码失败');
+        btn.textContent = '获取登录二维码';
+        btn.disabled = false;
+    }
+}
+
+function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+
+    pollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/wx/scan_status');
+            const data = await resp.json();
+
+            const statusEl = document.getElementById('scanStatus');
+
+            if (data.status === 0) {
+                statusEl.innerHTML = '<span class="status-badge waiting">等待扫码...</span>';
+            } else if (data.status === 1) {
+                statusEl.innerHTML = '<span class="status-badge waiting">已扫码，请在手机上确认</span>';
+            } else if (data.status === 4) {
+                // User confirmed, complete login
+                clearInterval(pollTimer);
+                statusEl.innerHTML = '<span class="status-badge waiting">正在登录...</span>';
+
+                const loginResp = await fetch('/api/wx/confirm_login', {method: 'POST'});
+                const loginData = await loginResp.json();
+
+                if (loginData.success) {
+                    statusEl.innerHTML = `<span class="status-badge success">登录成功！${loginData.nickname ? '(' + loginData.nickname + ')' : ''}</span>`;
+                    document.getElementById('qrcodeSection').style.display = 'none';
+                    checkWxStatus();
+                    showToast('微信登录成功');
+                } else {
+                    statusEl.innerHTML = `<span class="status-badge error">登录失败: ${loginData.msg || '未知错误'}</span>`;
+                }
+            } else if (data.status === 2 || data.status === 3) {
+                clearInterval(pollTimer);
+                statusEl.innerHTML = '<span class="status-badge error">二维码已过期，请刷新</span>';
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }, 2000);
+}
+
+checkWxStatus();
+</script>
+{% endblock %}
