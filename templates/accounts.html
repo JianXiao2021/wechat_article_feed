@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}关注管理 - 微信文章阅读器{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>关注管理</h1>
+</div>
+
+<!-- Add account section -->
+<div class="add-section">
+    <div class="tabs" style="margin:-16px -16px 16px; padding:0;">
+        <div class="tab active" id="tabLink" onclick="switchTab('link')">粘贴链接</div>
+        <div class="tab" id="tabSearch" onclick="switchTab('search')">搜索公众号</div>
+    </div>
+
+    <!-- Tab: Add by link -->
+    <div id="panelLink">
+        <div class="input-row">
+            <input type="text" id="articleLink" placeholder="粘贴微信公众号文章链接">
+            <button class="btn btn-primary btn-small" onclick="addByLink()">关注</button>
+        </div>
+        <p style="font-size:0.75rem;color:var(--text-secondary);">
+            复制任意一篇该公众号的文章链接粘贴到上方即可关注
+        </p>
+    </div>
+
+    <!-- Tab: Search -->
+    <div id="panelSearch" style="display:none;">
+        <div class="input-row">
+            <input type="text" id="searchKeyword" placeholder="输入公众号名称搜索">
+            <button class="btn btn-primary btn-small" onclick="searchAccount()">搜索</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+    </div>
+</div>
+
+<div style="height:1px;background:var(--border);"></div>
+
+<!-- Subscribed accounts list -->
+<div id="accountsList"></div>
+<div class="loading" id="loadingIndicator" style="display:none;">
+    <div class="loading-spinner"></div>
+    <div>加载中...</div>
+</div>
+<div class="empty-state" id="emptyState" style="display:none;">
+    <p>还没有关注任何公众号</p>
+    <p style="margin-top:8px;">通过上方粘贴文章链接或搜索来关注</p>
+</div>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showToast(msg, duration) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), duration || 2000);
+}
+
+function switchTab(tab) {
+    document.getElementById('tabLink').classList.toggle('active', tab === 'link');
+    document.getElementById('tabSearch').classList.toggle('active', tab === 'search');
+    document.getElementById('panelLink').style.display = tab === 'link' ? 'block' : 'none';
+    document.getElementById('panelSearch').style.display = tab === 'search' ? 'block' : 'none';
+}
+
+async function addByLink() {
+    const link = document.getElementById('articleLink').value.trim();
+    if (!link) {
+        showToast('请输入文章链接');
+        return;
+    }
+
+    showToast('正在添加...');
+
+    try {
+        const resp = await fetch('/api/accounts/add_by_link', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({link: link}),
+        });
+        const data = await resp.json();
+
+        if (data.need_wx_login) {
+            showToast('请先扫码登录微信');
+            return;
+        }
+
+        showToast(data.msg);
+        if (data.success) {
+            document.getElementById('articleLink').value = '';
+            loadAccounts();
+        }
+    } catch (e) {
+        showToast('添加失败，请稍后重试');
+    }
+}
+
+async function searchAccount() {
+    const keyword = document.getElementById('searchKeyword').value.trim();
+    if (!keyword) {
+        showToast('请输入搜索关键词');
+        return;
+    }
+
+    const container = document.getElementById('searchResults');
+    container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>搜索中...</div></div>';
+
+    try {
+        const resp = await fetch('/api/accounts/search', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({keyword: keyword}),
+        });
+        const data = await resp.json();
+
+        if (data.need_wx_login) {
+            container.innerHTML = '<p style="color:var(--text-secondary);font-size:0.875rem;">请先扫码登录微信</p>';
+            return;
+        }
+
+        if (!data.success || !data.accounts || data.accounts.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary);font-size:0.875rem;padding:12px 0;">未找到相关公众号</p>';
+            return;
+        }
+
+        container.innerHTML = '';
+        data.accounts.forEach(acct => {
+            const item = document.createElement('div');
+            item.className = 'search-result-item';
+            item.innerHTML = `
+                <img class="avatar" src="${acct.round_head_img || ''}" onerror="this.style.display='none'">
+                <div class="info">
+                    <div class="name">${acct.nickname}</div>
+                    <div class="alias">${acct.alias || ''}</div>
+                </div>
+                <button class="btn btn-primary btn-small" onclick='subscribeAccount(${JSON.stringify(acct).replace(/'/g, "&#39;")})'>关注</button>
+            `;
+            container.appendChild(item);
+        });
+    } catch (e) {
+        container.innerHTML = '<p style="color:var(--danger);font-size:0.875rem;">搜索失败</p>';
+    }
+}
+
+async function subscribeAccount(acct) {
+    try {
+        const resp = await fetch('/api/accounts/subscribe', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(acct),
+        });
+        const data = await resp.json();
+        showToast(data.msg);
+        if (data.success) loadAccounts();
+    } catch (e) {
+        showToast('关注失败');
+    }
+}
+
+async function unsubscribe(accountId, name) {
+    if (!confirm(`确定取消关注 ${name} 吗？`)) return;
+
+    try {
+        const resp = await fetch(`/api/accounts/${accountId}/unsubscribe`, {method: 'POST'});
+        const data = await resp.json();
+        if (data.success) {
+            showToast('已取消关注');
+            loadAccounts();
+        }
+    } catch (e) {
+        showToast('操作失败');
+    }
+}
+
+async function loadAccounts() {
+    const container = document.getElementById('accountsList');
+    const loading = document.getElementById('loadingIndicator');
+    const empty = document.getElementById('emptyState');
+
+    loading.style.display = 'block';
+    empty.style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/accounts');
+        const accounts = await resp.json();
+
+        loading.style.display = 'none';
+
+        if (accounts.length === 0) {
+            container.innerHTML = '';
+            empty.style.display = 'block';
+            return;
+        }
+
+        container.innerHTML = '';
+        accounts.forEach(acct => {
+            const card = document.createElement('div');
+            card.className = 'account-card';
+            card.innerHTML = `
+                <img class="avatar" src="${acct.round_head_img || ''}" onerror="this.style.background='var(--border)'">
+                <div class="info">
+                    <div class="name">${acct.nickname}</div>
+                    <div class="detail">${acct.alias ? '@' + acct.alias + ' · ' : ''}${acct.article_count} 篇文章</div>
+                </div>
+                <button class="btn btn-small btn-outline" onclick="unsubscribe(${acct.id}, '${acct.nickname.replace(/'/g, "\\'")}')">取消关注</button>
+            `;
+            container.appendChild(card);
+        });
+    } catch (e) {
+        loading.style.display = 'none';
+        container.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+loadAccounts();
+</script>
+{% endblock %}

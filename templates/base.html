@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>{% block title %}微信文章阅读器{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <!-- Bottom navigation -->
+    {% if current_user.is_authenticated %}
+    <nav class="bottom-nav">
+        <a href="{{ url_for('feed') }}" class="nav-item {% if request.endpoint == 'feed' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            <span>信息流</span>
+        </a>
+        <a href="{{ url_for('accounts_page') }}" class="nav-item {% if request.endpoint == 'accounts_page' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" width="24" height="24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            <span>关注</span>
+        </a>
+        <a href="{{ url_for('history_page') }}" class="nav-item {% if request.endpoint == 'history_page' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" width="24" height="24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+            <span>历史</span>
+        </a>
+        <a href="{{ url_for('wx_login_page') }}" class="nav-item {% if request.endpoint == 'wx_login_page' %}active{% endif %}">
+            <svg viewBox="0 0 24 24" width="24" height="24"><path d="M9.5 4C5.36 4 2 6.69 2 10c0 1.89 1.08 3.56 2.78 4.66L4 17l2.5-1.5C7.55 15.82 8.5 16 9.5 16c.27 0 .54-.02.8-.04A5.44 5.44 0 0 1 10 14.5c0-3.04 2.69-5.5 6-5.5.34 0 .67.03 1 .08C16.32 5.83 13.22 4 9.5 4zM7 9a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm5 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm4 2.5c-2.76 0-5 1.94-5 4.33 0 2.39 2.24 4.34 5 4.34.62 0 1.21-.09 1.76-.26L20 21l-.5-1.97C20.44 18.12 21 16.93 21 15.83c0-2.39-2.24-4.33-5-4.33zm-1.5 3.5a.83.83 0 1 1 0-1.67.83.83 0 0 1 0 1.67zm3 0a.83.83 0 1 1 0-1.67.83.83 0 0 1 0 1.67z"/></svg>
+            <span>微信</span>
+        </a>
+    </nav>
+    {% endif %}
+
+    <main class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

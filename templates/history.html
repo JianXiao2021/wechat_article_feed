@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}阅读历史 - 微信文章阅读器{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>阅读历史</h1>
+</div>
+
+<div id="historyContainer"></div>
+<div class="load-more-trigger" id="loadMoreTrigger"></div>
+<div class="loading" id="loadingIndicator" style="display:none;">
+    <div class="loading-spinner"></div>
+    <div>加载中...</div>
+</div>
+<div class="empty-state" id="emptyState" style="display:none;">
+    <p>还没有阅读记录</p>
+    <p style="margin-top:8px;"><a href="{{ url_for('feed') }}">去看看文章吧</a></p>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentPage = 1;
+let isLoading = false;
+let hasMore = true;
+
+function formatTime(ts) {
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + '小时前';
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    if (d.getFullYear() === now.getFullYear()) return month + '月' + day + '日';
+    return d.getFullYear() + '年' + month + '月' + day + '日';
+}
+
+function formatReadTime(iso) {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if (diff < 60) return '刚刚阅读';
+    if (diff < 3600) return Math.floor(diff / 60) + '分钟前阅读';
+    if (diff < 86400) return Math.floor(diff / 3600) + '小时前阅读';
+    if (diff < 604800) return Math.floor(diff / 86400) + '天前阅读';
+    return d.toLocaleDateString('zh-CN') + ' 阅读';
+}
+
+function renderHistoryItem(item) {
+    const card = document.createElement('div');
+    card.className = 'article-card';
+    card.onclick = () => window.open(item.link, '_blank');
+
+    let coverHtml = '';
+    if (item.cover) {
+        coverHtml = `<img class="article-cover" src="${item.cover}" loading="lazy" onerror="this.style.display='none'">`;
+    }
+
+    card.innerHTML = `
+        <div class="article-info">
+            <div class="article-title">${item.title}</div>
+            <div class="article-meta">
+                ${item.account_avatar ? `<img class="account-avatar" src="${item.account_avatar}" onerror="this.style.display='none'">` : ''}
+                <span>${item.account_name}</span>
+                <span>${formatTime(item.create_time)}</span>
+            </div>
+            <div class="read-time">${formatReadTime(item.read_at)}</div>
+        </div>
+        ${coverHtml}
+    `;
+    return card;
+}
+
+async function loadHistory(page) {
+    if (isLoading || !hasMore) return;
+    isLoading = true;
+    document.getElementById('loadingIndicator').style.display = 'block';
+
+    try {
+        const resp = await fetch(`/api/history?page=${page}`);
+        const data = await resp.json();
+
+        if (page === 1 && data.history.length === 0) {
+            document.getElementById('emptyState').style.display = 'block';
+            hasMore = false;
+            return;
+        }
+
+        const container = document.getElementById('historyContainer');
+        data.history.forEach(item => {
+            container.appendChild(renderHistoryItem(item));
+        });
+
+        hasMore = data.has_more;
+        currentPage = page;
+    } catch (e) {
+        console.error(e);
+    } finally {
+        isLoading = false;
+        document.getElementById('loadingIndicator').style.display = 'none';
+    }
+}
+
+const observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && !isLoading && hasMore) {
+        loadHistory(currentPage + 1);
+    }
+}, {rootMargin: '200px'});
+
+observer.observe(document.getElementById('loadMoreTrigger'));
+
+loadHistory(1);
+</script>
+{% endblock %}
