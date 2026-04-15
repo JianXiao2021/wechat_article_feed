@@ -2,13 +2,22 @@
 {% block title %}信息流 - 微信文章阅读器{% endblock %}
 
 {% block content %}
+{% if not wx_logged_in %}
+<div style="background:#fdf6ec;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+    <span style="font-size:0.8125rem;color:#e6a23c;">微信未登录，需要登录后才能获取文章</span>
+    <a href="{{ url_for('wx_login_page') }}" class="btn btn-small btn-primary">去登录</a>
+</div>
+{% endif %}
+
 <div class="page-header">
     <h1>信息流</h1>
     <button class="btn btn-small btn-outline" id="refreshBtn" onclick="refreshFeed()">刷新文章</button>
 </div>
 
 <div id="feedContainer"></div>
-<div class="load-more-trigger" id="loadMoreTrigger"></div>
+<div id="loadMoreSection" style="display:none; text-align:center; padding:16px;">
+    <button class="btn btn-outline" id="loadMoreBtn" onclick="loadMore()">加载更多</button>
+</div>
 <div class="loading" id="loadingIndicator" style="display:none;">
     <div class="loading-spinner"></div>
     <div>加载中...</div>
@@ -26,6 +35,11 @@
 let currentPage = 1;
 let isLoading = false;
 let hasMore = true;
+
+function proxyImg(url) {
+    if (!url) return '';
+    return '/api/proxy/image?url=' + encodeURIComponent(url);
+}
 
 function formatTime(ts) {
     const d = new Date(ts * 1000);
@@ -51,18 +65,18 @@ function showToast(msg, duration) {
 function renderArticle(art) {
     const card = document.createElement('div');
     card.className = 'article-card' + (art.is_read ? ' read' : '');
-    card.onclick = () => openArticle(art);
+    card.onclick = () => openArticle(art, card);
 
     let coverHtml = '';
     if (art.cover) {
-        coverHtml = `<img class="article-cover" src="${art.cover}" loading="lazy" onerror="this.style.display='none'">`;
+        coverHtml = `<img class="article-cover" src="${proxyImg(art.cover)}" loading="lazy" onerror="this.style.display='none'">`;
     }
 
     card.innerHTML = `
         <div class="article-info">
             <div class="article-title">${art.title}</div>
             <div class="article-meta">
-                ${art.account_avatar ? `<img class="account-avatar" src="${art.account_avatar}" onerror="this.style.display='none'">` : ''}
+                ${art.account_avatar ? `<img class="account-avatar" src="${proxyImg(art.account_avatar)}" onerror="this.style.display='none'">` : ''}
                 <span>${art.account_name}</span>
                 <span>${formatTime(art.create_time)}</span>
             </div>
@@ -72,24 +86,21 @@ function renderArticle(art) {
     return card;
 }
 
-function openArticle(art) {
-    // Record history
+function openArticle(art, card) {
     fetch('/api/history/record', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({article_id: art.id}),
     });
-
-    // Mark as read visually
-    art.is_read = true;
-
+    if (card) card.classList.add('read');
     window.open(art.link, '_blank');
 }
 
 async function loadFeed(page) {
-    if (isLoading || !hasMore) return;
+    if (isLoading) return;
     isLoading = true;
     document.getElementById('loadingIndicator').style.display = 'block';
+    document.getElementById('loadMoreSection').style.display = 'none';
 
     try {
         const resp = await fetch(`/api/feed?page=${page}`);
@@ -108,11 +119,21 @@ async function loadFeed(page) {
 
         hasMore = data.has_more;
         currentPage = page;
+
+        if (hasMore) {
+            document.getElementById('loadMoreSection').style.display = 'block';
+        }
     } catch (e) {
         showToast('加载失败，请稍后重试');
     } finally {
         isLoading = false;
         document.getElementById('loadingIndicator').style.display = 'none';
+    }
+}
+
+function loadMore() {
+    if (!isLoading && hasMore) {
+        loadFeed(currentPage + 1);
     }
 }
 
@@ -128,11 +149,11 @@ async function refreshFeed() {
             showToast('请先扫码登录微信');
             return;
         }
-        // Reload the feed from scratch
         currentPage = 1;
         hasMore = true;
         document.getElementById('feedContainer').innerHTML = '';
         document.getElementById('emptyState').style.display = 'none';
+        document.getElementById('loadMoreSection').style.display = 'none';
         await loadFeed(1);
         showToast(data.fetched > 0 ? `获取了 ${data.fetched} 篇新文章` : '没有新文章');
     } catch (e) {
@@ -143,16 +164,6 @@ async function refreshFeed() {
     }
 }
 
-// Infinite scroll with IntersectionObserver
-const observer = new IntersectionObserver(entries => {
-    if (entries[0].isIntersecting && !isLoading && hasMore) {
-        loadFeed(currentPage + 1);
-    }
-}, {rootMargin: '200px'});
-
-observer.observe(document.getElementById('loadMoreTrigger'));
-
-// Initial load
 loadFeed(1);
 </script>
 {% endblock %}

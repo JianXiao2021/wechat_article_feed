@@ -3,15 +3,14 @@ WeChat Article Reader - Main Flask Application
 """
 
 import io
-import json
-import re
 import time
-from datetime import datetime, timezone
-from urllib.parse import urlparse, parse_qs
+import requests as http_requests
+from datetime import datetime
+from urllib.parse import urlparse
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    jsonify, flash, send_file, session
+    jsonify, flash, send_file, session, Response
 )
 from flask_login import (
     LoginManager, login_user, logout_user,
@@ -63,7 +62,8 @@ def register():
         db.session.add(user)
         db.session.commit()
         login_user(user, remember=True)
-        return redirect(url_for('feed'))
+        # New users need to login WeChat first
+        return redirect(url_for('wx_login_page'))
     return render_template('register.html')
 
 
@@ -78,7 +78,12 @@ def login():
         if user and user.check_password(password):
             login_user(user, remember=True)
             next_page = request.args.get('next')
-            return redirect(next_page or url_for('feed'))
+            if next_page:
+                return redirect(next_page)
+            # If WeChat not logged in, guide user there first
+            if not wx_client.is_logged_in:
+                return redirect(url_for('wx_login_page'))
+            return redirect(url_for('feed'))
         flash('用户名或密码错误', 'error')
     return render_template('login.html')
 
@@ -102,7 +107,8 @@ def index():
 @app.route('/feed')
 @login_required
 def feed():
-    return render_template('feed.html')
+    wx_logged_in = wx_client.is_logged_in
+    return render_template('feed.html', wx_logged_in=wx_logged_in)
 
 
 @app.route('/history')
@@ -194,38 +200,6 @@ def api_get_accounts():
             'subscribed_at': sub.created_at.isoformat() if sub.created_at else '',
         })
     return jsonify(accounts)
-
-
-@app.route('/api/accounts/add_by_link', methods=['POST'])
-@login_required
-def api_add_account_by_link():
-    """Add a public account by pasting one of its article links.
-
-    From the link, extract the __biz parameter which is the base64-encoded fakeid,
-    then use the search API to find the account info.
-    """
-    link = request.json.get('link', '').strip()
-    if not link:
-        return jsonify({'success': False, 'msg': '请输入文章链接'})
-
-    if not wx_client.is_logged_in:
-        return jsonify({'success': False, 'msg': '微信未登录，请先扫码登录', 'need_wx_login': True})
-
-    # Extract __biz from the article URL
-    biz = _extract_biz(link)
-
-    if not biz:
-        return jsonify({'success': False, 'msg': '无法从链接中提取公众号信息，请确认是微信公众号文章链接'})
-
-    # Use biz to search for the account
-    # First check if we already have this account by searching WeChat
-    results = wx_client.search_account(biz)
-    if not results or len(results) == 0:
-        # Try using biz directly as a search term
-        return jsonify({'success': False, 'msg': '未找到对应的公众号，请稍后重试'})
-
-    acct_info = results[0]
-    return _subscribe_account(acct_info)
 
 
 @app.route('/api/accounts/search', methods=['POST'])
@@ -452,7 +426,7 @@ def api_record_history():
 
     if existing:
         # Update the read_at time
-        existing.read_at = datetime.now(timezone.utc)
+        existing.read_at = datetime.utcnow()
     else:
         record = ReadHistory(
             user_id=current_user.id,
@@ -465,27 +439,6 @@ def api_record_history():
 
 
 # ---- Helpers ----
-
-def _extract_biz(url):
-    """Extract __biz parameter from a WeChat article URL."""
-    try:
-        parsed = urlparse(url)
-        params = parse_qs(parsed.query)
-        biz = params.get('__biz', [None])[0]
-        if biz:
-            return biz
-
-        # Try to find biz in the fragment or path
-        if '#' in url:
-            fragment = url.split('#')[1]
-            params = parse_qs(fragment)
-            biz = params.get('__biz', [None])[0]
-            if biz:
-                return biz
-    except Exception:
-        pass
-    return None
-
 
 def _fetch_articles_for_account(account, max_pages=3):
     """Fetch recent articles for an account and store them in DB."""
@@ -533,6 +486,49 @@ def _fetch_articles_for_account(account, max_pages=3):
         time.sleep(1)  # Rate limit
 
     return total_new
+
+
+# ---- API: Image proxy ----
+
+@app.route('/api/proxy/image')
+def api_proxy_image():
+    """Proxy WeChat images to bypass hotlink protection.
+
+    WeChat images check the Referer header and reject direct loading from
+    third-party websites. We proxy the request with a proper Referer.
+    """
+    img_url = request.args.get('url', '')
+    if not img_url:
+        return '', 400
+
+    # Only allow proxying WeChat-related image domains
+    try:
+        parsed = urlparse(img_url)
+        allowed_hosts = ('mmbiz.qpic.cn', 'mmbiz.qlogo.cn', 'wx.qlogo.cn',
+                         'mp.weixin.qq.com', 'res.wx.qq.com')
+        if parsed.hostname not in allowed_hosts:
+            return '', 403
+    except Exception:
+        return '', 400
+
+    try:
+        resp = http_requests.get(img_url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/130.0.0.0 Safari/537.36',
+            'Referer': 'https://mp.weixin.qq.com/',
+        }, timeout=10, stream=True)
+
+        # Stream the image response back
+        return Response(
+            resp.iter_content(chunk_size=4096),
+            content_type=resp.headers.get('Content-Type', 'image/jpeg'),
+            headers={
+                'Cache-Control': 'public, max-age=86400',
+            },
+        )
+    except Exception:
+        return '', 502
 
 
 # ---- App initialization ----
