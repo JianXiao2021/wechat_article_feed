@@ -6,7 +6,6 @@
     <h2>微信公众号平台登录</h2>
     <p class="desc">
         需要登录微信公众号后台才能获取文章<br>
-        使用微信扫描下方二维码登录你的个人公众号<br>
         登录后约4天内无需重新登录
     </p>
 
@@ -19,6 +18,14 @@
             <img id="qrcodeImg" alt="QR Code">
         </div>
         <div id="scanStatus"></div>
+        <!-- Mobile hint: shown only on small screens -->
+        <div id="mobileHint" style="display:none; margin-top:12px; padding:10px 14px; background:#f0f9eb; border-radius:8px; font-size:0.75rem; color:#555; line-height:1.7; text-align:left;">
+            <b>手机上如何扫码？</b><br>
+            1. <b>长按</b>上方二维码图片 → 选择「保存图片」<br>
+            2. 打开<b>微信</b> → 右上角「+」→「扫一扫」<br>
+            3. 点击右下角「相册」→ 选择刚保存的二维码图片<br>
+            4. 在弹出的页面中确认登录
+        </div>
     </div>
 
     <button class="btn btn-primary" id="loginBtn" onclick="startLogin()">获取登录二维码</button>
@@ -28,8 +35,9 @@
         <ol style="font-size:0.75rem; color:var(--text-secondary); line-height:1.8; padding-left:20px;">
             <li>你需要有一个微信公众号（个人订阅号即可，可免费注册）</li>
             <li>点击上方按钮获取二维码</li>
-            <li>用绑定了该公众号的微信扫描二维码</li>
-            <li>在手机上确认登录</li>
+            <li><b>电脑端</b>：直接用微信扫描二维码</li>
+            <li><b>手机端</b>：长按二维码保存图片，然后在微信「扫一扫」中从相册选择</li>
+            <li>在微信中确认登录</li>
             <li>登录成功后即可搜索和关注其他公众号获取文章</li>
         </ol>
     </div>
@@ -41,6 +49,7 @@
 {% block extra_scripts %}
 <script>
 let pollTimer = null;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 function showToast(msg, duration) {
     const toast = document.getElementById('toast');
@@ -74,7 +83,6 @@ async function startLogin() {
     btn.textContent = '加载中...';
 
     try {
-        // Load QR code
         const resp = await fetch('/api/wx/qrcode');
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -83,10 +91,14 @@ async function startLogin() {
         document.getElementById('qrcodeSection').style.display = 'block';
         document.getElementById('scanStatus').innerHTML = '<span class="status-badge waiting">等待扫码...</span>';
 
+        // Show mobile hint on phones
+        if (isMobile) {
+            document.getElementById('mobileHint').style.display = 'block';
+        }
+
         btn.textContent = '刷新二维码';
         btn.disabled = false;
 
-        // Start polling scan status
         startPolling();
     } catch (e) {
         showToast('获取二维码失败');
@@ -105,14 +117,22 @@ function startPolling() {
 
             const statusEl = document.getElementById('scanStatus');
 
+            // WeChat scan status codes (from wechat-article-exporter):
+            //   0 = waiting for scan
+            //   4/6 = scanned, waiting for user to confirm on phone
+            //   1 = user confirmed on phone, ready to complete login
+            //   2/3 = QR code expired or cancelled
+            //   5 = account not bound to email
+
             if (data.status === 0) {
                 statusEl.innerHTML = '<span class="status-badge waiting">等待扫码...</span>';
+            } else if (data.status === 4 || data.status === 6) {
+                document.getElementById('qrcodeImg').style.opacity = '0.3';
+                document.getElementById('mobileHint').style.display = 'none';
+                statusEl.innerHTML = '<span class="status-badge waiting">扫码成功，请在手机上确认登录</span>';
             } else if (data.status === 1) {
-                statusEl.innerHTML = '<span class="status-badge waiting">已扫码，请在手机上确认</span>';
-            } else if (data.status === 4) {
-                // User confirmed, complete login
                 clearInterval(pollTimer);
-                statusEl.innerHTML = '<span class="status-badge waiting">正在登录...</span>';
+                statusEl.innerHTML = '<span class="status-badge waiting">已确认，正在登录中...</span>';
 
                 const loginResp = await fetch('/api/wx/confirm_login', {method: 'POST'});
                 const loginData = await loginResp.json();
@@ -127,7 +147,11 @@ function startPolling() {
                 }
             } else if (data.status === 2 || data.status === 3) {
                 clearInterval(pollTimer);
-                statusEl.innerHTML = '<span class="status-badge error">二维码已过期，请刷新</span>';
+                statusEl.innerHTML = '<span class="status-badge error">二维码已过期，请重新获取</span>';
+                document.getElementById('loginBtn').textContent = '重新获取二维码';
+            } else if (data.status === 5) {
+                clearInterval(pollTimer);
+                statusEl.innerHTML = '<span class="status-badge error">该账号未绑定邮箱，无法扫码登录</span>';
             }
         } catch (e) {
             console.error(e);

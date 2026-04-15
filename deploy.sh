@@ -22,13 +22,20 @@ echo ">>> 激活虚拟环境并安装依赖..."
 source venv/bin/activate
 pip install -r requirements.txt --quiet
 
+# Load .env file
+if [ ! -f ".env" ]; then
+    echo "错误: 未找到 .env 文件。请先复制模板并填写凭证："
+    echo "  cp .env.example .env"
+    echo "  # 然后编辑 .env 填入 DATABASE_URL 等信息"
+    exit 1
+fi
+export $(grep -v '^#' .env | xargs)
+
 # Generate a persistent secret key if not set
 if [ -z "$SECRET_KEY" ]; then
-    if [ ! -f ".env" ]; then
-        echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" > .env
-        echo ">>> 已生成 .env 文件（包含 SECRET_KEY）"
-    fi
-    export $(cat .env | xargs)
+    echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+    export $(grep -v '^#' .env | xargs)
+    echo ">>> 已自动生成 SECRET_KEY 并追加到 .env"
 fi
 
 echo ">>> 初始化数据库..."

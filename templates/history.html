@@ -7,7 +7,9 @@
 </div>
 
 <div id="historyContainer"></div>
-<div class="load-more-trigger" id="loadMoreTrigger"></div>
+<div id="loadMoreSection" style="display:none; text-align:center; padding:16px;">
+    <button class="btn btn-outline" onclick="loadMore()">加载更多</button>
+</div>
 <div class="loading" id="loadingIndicator" style="display:none;">
     <div class="loading-spinner"></div>
     <div>加载中...</div>
@@ -23,6 +25,11 @@
 let currentPage = 1;
 let isLoading = false;
 let hasMore = true;
+
+function proxyImg(url) {
+    if (!url) return '';
+    return '/api/proxy/image?url=' + encodeURIComponent(url);
+}
 
 function formatTime(ts) {
     const d = new Date(ts * 1000);
@@ -55,14 +62,14 @@ function renderHistoryItem(item) {
 
     let coverHtml = '';
     if (item.cover) {
-        coverHtml = `<img class="article-cover" src="${item.cover}" loading="lazy" onerror="this.style.display='none'">`;
+        coverHtml = `<img class="article-cover" src="${proxyImg(item.cover)}" loading="lazy" onerror="this.style.display='none'">`;
     }
 
     card.innerHTML = `
         <div class="article-info">
             <div class="article-title">${item.title}</div>
             <div class="article-meta">
-                ${item.account_avatar ? `<img class="account-avatar" src="${item.account_avatar}" onerror="this.style.display='none'">` : ''}
+                ${item.account_avatar ? `<img class="account-avatar" src="${proxyImg(item.account_avatar)}" onerror="this.style.display='none'">` : ''}
                 <span>${item.account_name}</span>
                 <span>${formatTime(item.create_time)}</span>
             </div>
@@ -74,9 +81,10 @@ function renderHistoryItem(item) {
 }
 
 async function loadHistory(page) {
-    if (isLoading || !hasMore) return;
+    if (isLoading) return;
     isLoading = true;
     document.getElementById('loadingIndicator').style.display = 'block';
+    document.getElementById('loadMoreSection').style.display = 'none';
 
     try {
         const resp = await fetch(`/api/history?page=${page}`);
@@ -95,6 +103,10 @@ async function loadHistory(page) {
 
         hasMore = data.has_more;
         currentPage = page;
+
+        if (hasMore) {
+            document.getElementById('loadMoreSection').style.display = 'block';
+        }
     } catch (e) {
         console.error(e);
     } finally {
@@ -103,13 +115,11 @@ async function loadHistory(page) {
     }
 }
 
-const observer = new IntersectionObserver(entries => {
-    if (entries[0].isIntersecting && !isLoading && hasMore) {
+function loadMore() {
+    if (!isLoading && hasMore) {
         loadHistory(currentPage + 1);
     }
-}, {rootMargin: '200px'});
-
-observer.observe(document.getElementById('loadMoreTrigger'));
+}
 
 loadHistory(1);
 </script>

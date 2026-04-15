@@ -6,10 +6,16 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL', f'sqlite:///{os.path.join(BASE_DIR, "data.db")}'
-    )
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    if not SQLALCHEMY_DATABASE_URI:
+        raise RuntimeError('DATABASE_URL environment variable is not set. '
+                           'Copy .env.example to .env and fill in your credentials.')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 5,
+        'pool_recycle': 300,
+        'pool_pre_ping': True,
+    }
 
     # WeChat MP platform settings
     WX_MP_USER_AGENT = (
@@ -22,4 +28,4 @@ class Config:
     ARTICLE_PAGE_SIZE = 10
 
     # How many articles to show per load in the feed
-    FEED_PAGE_SIZE = 20
+    FEED_PAGE_SIZE = 10

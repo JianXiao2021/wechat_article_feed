@@ -1,7 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from flask_bcrypt import Bcrypt
-from datetime import datetime, timezone
+from datetime import datetime
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
@@ -12,7 +12,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     subscriptions = db.relationship('Subscription', backref='user', lazy='dynamic')
     history = db.relationship('ReadHistory', backref='user', lazy='dynamic')
@@ -43,7 +43,7 @@ class Subscription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     account = db.relationship('Account')
 
@@ -57,10 +57,10 @@ class Article(db.Model):
     __tablename__ = 'articles'
     id = db.Column(db.Integer, primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False, index=True)
-    title = db.Column(db.String(500), nullable=False)
+    title = db.Column(db.Text, nullable=False)
     digest = db.Column(db.Text, default='')
-    link = db.Column(db.String(1000), nullable=False)
-    cover = db.Column(db.String(1000), default='')
+    link = db.Column(db.Text, nullable=False)
+    cover = db.Column(db.Text, default='')
     create_time = db.Column(db.Integer, nullable=False, index=True)  # unix timestamp
     aid = db.Column(db.String(64), default='', index=True)  # article unique id from WeChat
 
@@ -75,7 +75,7 @@ class ReadHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=False)
-    read_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    read_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     article = db.relationship('Article')
 
@@ -86,6 +86,6 @@ class WxSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     token = db.Column(db.String(200), nullable=False)
     cookies = db.Column(db.Text, nullable=False)  # JSON string of cookies
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=True)

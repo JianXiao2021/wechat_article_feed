@@ -8,7 +8,7 @@ import json
 import re
 import time
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 from config import Config
 from models import db, WxSession
@@ -41,7 +41,7 @@ class WxMpClient:
         ws = self._get_active_session()
         if not ws:
             return False
-        if ws.expires_at and datetime.now(timezone.utc) > ws.expires_at:
+        if ws.expires_at and datetime.utcnow() > ws.expires_at:
             ws.is_active = False
             db.session.commit()
             return False
@@ -58,32 +58,21 @@ class WxMpClient:
         }
 
     # ---- Login flow ----
+    # The complete WeChat MP login flow (from wechat-article-exporter):
+    #   1. POST bizlogin?action=startlogin  ->  gets uuid cookie in set-cookie
+    #   2. GET  scanloginqrcode?action=getqrcode  ->  returns QR image (needs uuid)
+    #   3. GET  scanloginqrcode?action=ask  ->  polls scan status (needs uuid)
+    #      status 0 = waiting for scan
+    #      status 4/6 = scanned, waiting for user to confirm on phone
+    #      status 1 = user confirmed, ready to complete login
+    #      status 2/3 = expired/cancelled
+    #   4. POST bizlogin?action=login  ->  completes login, gets token + session cookies
 
-    def start_login(self):
-        """Step 1: Get a login session id from WeChat, returns sessionid for startlogin."""
-        sess = requests.Session()
-        sess.headers.update({
-            'User-Agent': USER_AGENT,
-            'Referer': f'{MP_BASE}/',
-            'Origin': MP_BASE,
-        })
+    def get_login_qrcode(self, cookies_str=''):
+        """Start login flow: POST startlogin then GET qrcode.
 
-        # Visit the login page to get initial cookies
-        resp = sess.get(f'{MP_BASE}/cgi-bin/bizlogin', params={
-            'action': 'startlogin',
-        }, allow_redirects=False)
-
-        # Extract session cookies
-        cookies = sess.cookies.get_dict()
-        return {
-            'cookies': dict(sess.cookies),
-            'raw_cookies': '; '.join(f'{k}={v}' for k, v in sess.cookies.items()),
-        }
-
-    def get_login_qrcode(self, cookies_str):
-        """Step 2: Start the login flow and get QR code image bytes.
-
-        Flow: POST startlogin -> GET getqrcode (returns image)
+        Uses requests.Session to accumulate cookies across steps.
+        Returns qrcode image bytes and the full cookie string for subsequent calls.
         """
         sess = requests.Session()
         sess.headers.update({
@@ -92,14 +81,15 @@ class WxMpClient:
             'Origin': MP_BASE,
         })
 
-        # Parse cookies string back
+        # Load any existing cookies
         if cookies_str:
             for part in cookies_str.split('; '):
                 if '=' in part:
                     k, v = part.split('=', 1)
                     sess.cookies.set(k, v)
 
-        # Step: POST startlogin to get uuid cookie
+        # Step 1: POST startlogin to get uuid cookie
+        sid = str(int(time.time() * 1000)) + str(int(time.time()) % 100)
         resp = sess.post(
             f'{MP_BASE}/cgi-bin/bizlogin',
             params={'action': 'startlogin'},
@@ -107,7 +97,7 @@ class WxMpClient:
                 'userlang': 'zh_CN',
                 'redirect_url': '',
                 'login_type': 3,
-                'sessionid': str(int(time.time() * 1000)),
+                'sessionid': sid,
                 'token': '',
                 'lang': 'zh_CN',
                 'f': 'json',
@@ -115,7 +105,14 @@ class WxMpClient:
             },
         )
 
-        # Now get the QR code image
+        # Log the startlogin response for debugging
+        try:
+            startlogin_data = resp.json()
+            print(f'[WX Login] startlogin response: {startlogin_data}')
+        except Exception:
+            print(f'[WX Login] startlogin response (non-json): {resp.status_code}')
+
+        # Step 2: GET the QR code image (uuid cookie is now in the session)
         qr_resp = sess.get(
             f'{MP_BASE}/cgi-bin/scanloginqrcode',
             params={
@@ -124,7 +121,9 @@ class WxMpClient:
             },
         )
 
+        # Collect ALL cookies from the session (including uuid from startlogin)
         all_cookies = '; '.join(f'{k}={v}' for k, v in sess.cookies.items())
+        print(f'[WX Login] cookies after qrcode: {list(sess.cookies.keys())}')
 
         return {
             'qrcode': qr_resp.content,
@@ -133,7 +132,15 @@ class WxMpClient:
         }
 
     def check_scan_status(self, cookies_str):
-        """Step 3: Poll whether the user has scanned the QR code."""
+        """Poll whether the user has scanned the QR code.
+
+        Returns status:
+          0 = waiting for scan
+          4 or 6 = scanned, waiting for confirm on phone
+          1 = confirmed, ready to call confirm_login
+          2 or 3 = expired/cancelled, need to refresh QR code
+          5 = account not bound to email
+        """
         headers = {
             'User-Agent': USER_AGENT,
             'Referer': f'{MP_BASE}/',
@@ -158,15 +165,18 @@ class WxMpClient:
         except Exception:
             return {'status': -1, 'msg': 'Failed to parse response'}
 
-        # status: 0=waiting, 1=scanned (waiting confirm), 4=confirmed, 2=cancelled/expired
         return {
             'status': data.get('status'),
             'msg': data.get('user_category', ''),
-            'raw': data,
+            'acct_size': data.get('acct_size', 0),
         }
 
     def confirm_login(self, cookies_str):
-        """Step 4: After user confirms on phone, complete the login."""
+        """Complete the login after user confirmed on phone (status=1).
+
+        Uses requests.Session to properly handle cookies and set-cookies
+        from the final bizlogin?action=login call.
+        """
         sess = requests.Session()
         sess.headers.update({
             'User-Agent': USER_AGENT,
@@ -174,12 +184,14 @@ class WxMpClient:
             'Origin': MP_BASE,
         })
 
-        # Set cookies
+        # Load ALL accumulated cookies (must include uuid from startlogin)
         if cookies_str:
             for part in cookies_str.split('; '):
                 if '=' in part:
                     k, v = part.split('=', 1)
                     sess.cookies.set(k, v)
+
+        print(f'[WX Login] confirm_login cookies: {list(sess.cookies.keys())}')
 
         resp = sess.post(
             f'{MP_BASE}/cgi-bin/bizlogin',
@@ -201,19 +213,27 @@ class WxMpClient:
         try:
             data = resp.json()
         except Exception:
-            return {'success': False, 'msg': 'Failed to parse login response'}
+            print(f'[WX Login] confirm_login non-json response: {resp.status_code} {resp.text[:500]}')
+            return {'success': False, 'msg': '登录响应解析失败'}
+
+        print(f'[WX Login] bizlogin response: {data}')
 
         redirect_url = data.get('redirect_url', '')
         if not redirect_url:
-            return {'success': False, 'msg': f'Login failed: {data}'}
+            ret = data.get('base_resp', {}).get('ret', '')
+            err_msg = data.get('base_resp', {}).get('err_msg', '')
+            return {'success': False, 'msg': f'登录失败 (ret={ret}, err={err_msg})'}
 
         # Extract token from redirect_url
         token_match = re.search(r'token=(\d+)', redirect_url)
         if not token_match:
-            return {'success': False, 'msg': 'Could not extract token'}
+            return {'success': False, 'msg': '无法从重定向URL中提取token'}
 
         token = token_match.group(1)
+
+        # Collect ALL cookies after login (session cookies from set-cookie are auto-merged)
         all_cookies = '; '.join(f'{k}={v}' for k, v in sess.cookies.items())
+        print(f'[WX Login] login success, token={token}, cookies: {list(sess.cookies.keys())}')
 
         # Deactivate old sessions
         WxSession.query.filter_by(is_active=True).update({'is_active': False})
@@ -222,7 +242,7 @@ class WxMpClient:
         ws = WxSession(
             token=token,
             cookies=all_cookies,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=4),
+            expires_at=datetime.utcnow() + timedelta(days=4),
             is_active=True,
         )
         db.session.add(ws)
@@ -312,7 +332,6 @@ class WxMpClient:
             return None
 
         if data.get('base_resp', {}).get('ret') == 200003:
-            # Session expired
             ws.is_active = False
             db.session.commit()
             return None

@@ -6,32 +6,13 @@
     <h1>关注管理</h1>
 </div>
 
-<!-- Add account section -->
+<!-- Search and add account -->
 <div class="add-section">
-    <div class="tabs" style="margin:-16px -16px 16px; padding:0;">
-        <div class="tab active" id="tabLink" onclick="switchTab('link')">粘贴链接</div>
-        <div class="tab" id="tabSearch" onclick="switchTab('search')">搜索公众号</div>
+    <div class="input-row">
+        <input type="text" id="searchKeyword" placeholder="输入公众号名称搜索" onkeydown="if(event.key==='Enter')searchAccount()">
+        <button class="btn btn-primary btn-small" id="searchBtn" onclick="searchAccount()">搜索</button>
     </div>
-
-    <!-- Tab: Add by link -->
-    <div id="panelLink">
-        <div class="input-row">
-            <input type="text" id="articleLink" placeholder="粘贴微信公众号文章链接">
-            <button class="btn btn-primary btn-small" onclick="addByLink()">关注</button>
-        </div>
-        <p style="font-size:0.75rem;color:var(--text-secondary);">
-            复制任意一篇该公众号的文章链接粘贴到上方即可关注
-        </p>
-    </div>
-
-    <!-- Tab: Search -->
-    <div id="panelSearch" style="display:none;">
-        <div class="input-row">
-            <input type="text" id="searchKeyword" placeholder="输入公众号名称搜索">
-            <button class="btn btn-primary btn-small" onclick="searchAccount()">搜索</button>
-        </div>
-        <div id="searchResults" class="search-results"></div>
-    </div>
+    <div id="searchResults" class="search-results"></div>
 </div>
 
 <div style="height:1px;background:var(--border);"></div>
@@ -44,7 +25,7 @@
 </div>
 <div class="empty-state" id="emptyState" style="display:none;">
     <p>还没有关注任何公众号</p>
-    <p style="margin-top:8px;">通过上方粘贴文章链接或搜索来关注</p>
+    <p style="margin-top:8px;">通过上方搜索公众号名称来关注</p>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -59,43 +40,9 @@ function showToast(msg, duration) {
     setTimeout(() => toast.classList.remove('show'), duration || 2000);
 }
 
-function switchTab(tab) {
-    document.getElementById('tabLink').classList.toggle('active', tab === 'link');
-    document.getElementById('tabSearch').classList.toggle('active', tab === 'search');
-    document.getElementById('panelLink').style.display = tab === 'link' ? 'block' : 'none';
-    document.getElementById('panelSearch').style.display = tab === 'search' ? 'block' : 'none';
-}
-
-async function addByLink() {
-    const link = document.getElementById('articleLink').value.trim();
-    if (!link) {
-        showToast('请输入文章链接');
-        return;
-    }
-
-    showToast('正在添加...');
-
-    try {
-        const resp = await fetch('/api/accounts/add_by_link', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({link: link}),
-        });
-        const data = await resp.json();
-
-        if (data.need_wx_login) {
-            showToast('请先扫码登录微信');
-            return;
-        }
-
-        showToast(data.msg);
-        if (data.success) {
-            document.getElementById('articleLink').value = '';
-            loadAccounts();
-        }
-    } catch (e) {
-        showToast('添加失败，请稍后重试');
-    }
+function proxyImg(url) {
+    if (!url) return '';
+    return '/api/proxy/image?url=' + encodeURIComponent(url);
 }
 
 async function searchAccount() {
@@ -127,16 +74,16 @@ async function searchAccount() {
         }
 
         container.innerHTML = '';
-        data.accounts.forEach(acct => {
+        data.accounts.forEach((acct, idx) => {
             const item = document.createElement('div');
             item.className = 'search-result-item';
             item.innerHTML = `
-                <img class="avatar" src="${acct.round_head_img || ''}" onerror="this.style.display='none'">
+                <img class="avatar" src="${proxyImg(acct.round_head_img)}" onerror="this.style.display='none'">
                 <div class="info">
                     <div class="name">${acct.nickname}</div>
                     <div class="alias">${acct.alias || ''}</div>
                 </div>
-                <button class="btn btn-primary btn-small" onclick='subscribeAccount(${JSON.stringify(acct).replace(/'/g, "&#39;")})'>关注</button>
+                <button class="btn btn-primary btn-small" id="subBtn${idx}" onclick='subscribeAccount(${JSON.stringify(acct).replace(/'/g, "&#39;")}, "subBtn${idx}")'>关注</button>
             `;
             container.appendChild(item);
         });
@@ -145,7 +92,13 @@ async function searchAccount() {
     }
 }
 
-async function subscribeAccount(acct) {
+async function subscribeAccount(acct, btnId) {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '关注中...';
+    }
+
     try {
         const resp = await fetch('/api/accounts/subscribe', {
             method: 'POST',
@@ -154,9 +107,23 @@ async function subscribeAccount(acct) {
         });
         const data = await resp.json();
         showToast(data.msg);
-        if (data.success) loadAccounts();
+        if (data.success) {
+            if (btn) {
+                btn.textContent = '已关注';
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline');
+            }
+            loadAccounts();
+        } else if (btn) {
+            btn.disabled = false;
+            btn.textContent = '关注';
+        }
     } catch (e) {
         showToast('关注失败');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '关注';
+        }
     }
 }
 
@@ -200,7 +167,7 @@ async function loadAccounts() {
             const card = document.createElement('div');
             card.className = 'account-card';
             card.innerHTML = `
-                <img class="avatar" src="${acct.round_head_img || ''}" onerror="this.style.background='var(--border)'">
+                <img class="avatar" src="${proxyImg(acct.round_head_img)}" onerror="this.style.background='var(--border)'">
                 <div class="info">
                     <div class="name">${acct.nickname}</div>
                     <div class="detail">${acct.alias ? '@' + acct.alias + ' · ' : ''}${acct.article_count} 篇文章</div>

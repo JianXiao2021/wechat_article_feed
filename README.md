@@ -17,11 +17,32 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
+# 配置数据库连接（首次运行必须）
+cp .env.example .env
+# 编辑 .env，填入你的 DATABASE_URL（获取方式见下方说明）
+
 # 启动开发服务器
 python3 app.py
 ```
 
 浏览器打开 http://localhost:5000
+
+### 获取 DATABASE_URL
+
+本项目使用 [Supabase](https://supabase.com/) 提供的云端 PostgreSQL 数据库。你需要：
+
+1. 注册 [Supabase](https://supabase.com/) 账号并创建一个项目
+2. 在项目 Dashboard 顶部点击 **Connect** 按钮
+3. 选择连接方式（推荐 Direct Connection），复制连接字符串
+4. 将连接字符串填入 `.env` 文件的 `DATABASE_URL` 字段
+
+连接字符串格式如下：
+
+```
+postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
+```
+
+> 如果你的网络不支持 IPv6，请在 Connect 页面选择 **Session Pooler** 方式。
 
 ## 部署到服务器
 
@@ -81,6 +102,10 @@ scp -r /path/to/read_wechat_article root@你的服务器IP:/root/
 # 在服务器上进入项目目录
 cd /root/read_wechat_article
 
+# 配置数据库连接
+cp .env.example .env
+nano .env  # 填入 DATABASE_URL（获取方式见「获取 DATABASE_URL」章节）
+
 # 一键部署
 bash deploy.sh
 ```
@@ -109,6 +134,7 @@ User=root
 WorkingDirectory=/root/read_wechat_article
 Environment=PORT=5000
 ExecStart=/root/read_wechat_article/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 app:app
+EnvironmentFile=/root/read_wechat_article/.env
 Restart=always
 RestartSec=5
 
@@ -175,11 +201,12 @@ certbot --nginx -d 你的域名
 - 需要有一个**微信公众号**（个人订阅号免费注册即可），用于登录微信公众号后台
 - 微信登录会话约 4 天过期，过期后需要重新扫码
 - 获取文章有频率限制，建议不要频繁刷新
-- 数据存储在本地 SQLite 数据库 `data.db` 中
+- 数据存储在 Supabase 云端 PostgreSQL 数据库中，需配置 `DATABASE_URL`（参见「获取 DATABASE_URL」章节）
+- `.env` 文件包含敏感凭证，请勿提交到 Git（已在 `.gitignore` 中排除）
 
 ## 技术栈
 
 - 后端：Python Flask
-- 数据库：SQLite
+- 数据库：PostgreSQL（Supabase 云端托管）
 - 前端：原生 HTML/CSS/JS（移动端优先设计）
 - 部署：Gunicorn
