@@ -12,6 +12,12 @@ class Config:
     if not SQLALCHEMY_DATABASE_URI:
         raise RuntimeError('DATABASE_URL environment variable is not set. '
                            'Copy .env.example to .env and fill in your credentials.')
+    # Use pg8000 (pure Python) driver so it works on Termux without compiling C extensions.
+    # Converts: postgresql://user:pass@host/db -> postgresql+pg8000://user:pass@host/db
+    if SQLALCHEMY_DATABASE_URI.startswith('postgresql://'):
+        SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace(
+            'postgresql://', 'postgresql+pg8000://', 1
+        )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_size': 5,
