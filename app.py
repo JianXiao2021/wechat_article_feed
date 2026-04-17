@@ -18,13 +18,12 @@ from flask_login import (
 )
 
 from config import Config
-from models import db, bcrypt, User, Account, Subscription, Article, ReadHistory
+from models import db, User, Account, Subscription, Article, ReadHistory
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
 db.init_app(app)
-bcrypt.init_app(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
