@@ -216,6 +216,25 @@ a {
     font-weight: 600;
 }
 
+/* ===== Group Tabs ===== */
+.group-tabs {
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+}
+
+.group-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.group-tabs .tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 /* ===== Article Card ===== */
 .article-card {
     background: var(--card-bg);
@@ -340,18 +359,81 @@ a {
     margin-top: 2px;
 }
 
+/* ===== Group Select in Account Card ===== */
+.group-select {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    background: var(--card-bg);
+    color: var(--text);
+    outline: none;
+    flex-shrink: 0;
+}
+
+.group-select:focus {
+    border-color: var(--primary);
+}
+
+/* ===== Group Management Section ===== */
+.group-section {
+    background: var(--card-bg);
+}
+
+.group-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.group-item .group-name {
+    flex: 1;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.group-item .group-count {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+/* ===== Section Card (Profile/My page) ===== */
+.section-card {
+    background: var(--card-bg);
+    margin: 8px 0;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.section-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.section-desc {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
 /* ===== Add Account Section ===== */
 .add-section {
     padding: 16px;
 }
 
-.add-section .input-row {
+.add-section .input-row,
+.group-section .input-row {
     display: flex;
     gap: 8px;
     margin-bottom: 12px;
 }
 
-.add-section input {
+.add-section input,
+.group-section input {
     flex: 1;
     padding: 10px 12px;
     border: 1px solid var(--border);
@@ -361,7 +443,8 @@ a {
     -webkit-appearance: none;
 }
 
-.add-section input:focus {
+.add-section input:focus,
+.group-section input:focus {
     border-color: var(--primary);
 }
 
@@ -429,12 +512,29 @@ a {
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border);
+    position: relative;
 }
 
 .qrcode-container img {
     width: 100%;
     height: 100%;
     object-fit: contain;
+}
+
+#qrcodeError {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.92);
+    cursor: pointer;
+    color: var(--danger);
+    font-size: 0.875rem;
 }
 
 .status-badge {

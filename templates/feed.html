@@ -11,8 +11,13 @@
 
 <div class="page-header">
     <h1>信息流</h1>
-    <button class="btn btn-small btn-outline" id="refreshBtn" onclick="refreshFeed()">刷新文章</button>
+    <div style="display:flex;align-items:center;gap:8px;">
+        <span id="syncIndicator" style="display:none;font-size:0.7rem;color:var(--text-secondary);">同步中...</span>
+        <button class="btn btn-small btn-outline" id="refreshBtn" onclick="refreshFeed()">刷新文章</button>
+    </div>
 </div>
+
+<div class="group-tabs" id="groupTabs" style="display:none;"></div>
 
 <div id="feedContainer"></div>
 <div id="loadMoreSection" style="display:none; text-align:center; padding:16px;">
@@ -23,8 +28,8 @@
     <div>加载中...</div>
 </div>
 <div class="empty-state" id="emptyState" style="display:none;">
-    <p>还没有关注任何公众号</p>
-    <p style="margin-top:8px;"><a href="{{ url_for('accounts_page') }}">去关注公众号</a></p>
+    <p id="emptyMsg">还没有关注任何公众号</p>
+    <p id="emptyHint" style="margin-top:8px;"><a href="{{ url_for('accounts_page') }}">去关注公众号</a></p>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -32,10 +37,18 @@
 
 {% block extra_scripts %}
 <script>
-let currentPage = 1;
+// ---- State ----
+let currentGroupId = null;
+let nextCursor = null;
 let isLoading = false;
 let hasMore = true;
+let isSyncing = false;
+let backfillAccounts = [];  // [{account_id, next_begin}]
+let totalNewArticles = 0;
+let totalArticlesShown = 0;
+const FEED_PAGE_SIZE = 10;
 
+// ---- Helpers ----
 function proxyImg(url) {
     if (!url) return '';
     return '/api/proxy/image?url=' + encodeURIComponent(url);
@@ -96,17 +109,88 @@ function openArticle(art, card) {
     window.open(art.link, '_blank');
 }
 
-async function loadFeed(page) {
+// ---- Groups ----
+async function loadGroups() {
+    try {
+        const resp = await fetch('/api/groups');
+        const groups = await resp.json();
+
+        const container = document.getElementById('groupTabs');
+        if (groups.length === 0) {
+            // No groups at all — show empty state
+            document.getElementById('emptyState').style.display = 'block';
+            document.getElementById('emptyMsg').textContent = '还没有关注任何公众号';
+            document.getElementById('emptyHint').innerHTML = '<a href="{{ url_for("accounts_page") }}">去关注公众号</a>';
+            return;
+        }
+
+        container.style.display = 'flex';
+        container.innerHTML = '';
+
+        // No "全部" tab — first group is default
+        groups.forEach((g, idx) => {
+            const tab = document.createElement('div');
+            tab.className = 'tab' + (idx === 0 ? ' active' : '');
+            tab.textContent = g.name;
+            tab.dataset.groupId = g.id;
+            tab.onclick = () => switchGroup(g.id, tab);
+            container.appendChild(tab);
+        });
+
+        // Activate first group
+        currentGroupId = groups[0].id;
+        await loadFeed();
+        // Auto-sync in background
+        syncFeed();
+    } catch (e) {
+        console.error('Failed to load groups', e);
+    }
+}
+
+function switchGroup(groupId, tabEl) {
+    if (groupId === currentGroupId) return;
+    currentGroupId = groupId;
+    document.querySelectorAll('#groupTabs .tab').forEach(t => t.classList.remove('active'));
+    tabEl.classList.add('active');
+
+    // Reset state
+    nextCursor = null;
+    hasMore = true;
+    totalNewArticles = 0;
+    totalArticlesShown = 0;
+    backfillAccounts = [];
+    document.getElementById('feedContainer').innerHTML = '';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('loadMoreSection').style.display = 'none';
+
+    loadFeed().then(() => syncFeed());
+}
+
+// ---- Feed Loading (from DB cache) ----
+async function loadFeed() {
     if (isLoading) return;
     isLoading = true;
     document.getElementById('loadingIndicator').style.display = 'block';
     document.getElementById('loadMoreSection').style.display = 'none';
 
     try {
-        const resp = await fetch(`/api/feed?page=${page}`);
+        let url = `/api/feed?group_id=${currentGroupId}`;
+        if (nextCursor !== null) {
+            url += `&cursor=${nextCursor}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
 
-        if (page === 1 && data.articles.length === 0) {
+        if (!nextCursor && data.articles.length === 0) {
+            const emptyMsg = document.getElementById('emptyMsg');
+            const emptyHint = document.getElementById('emptyHint');
+            if (!data.has_subscriptions) {
+                emptyMsg.textContent = '还没有关注任何公众号';
+                emptyHint.innerHTML = '<a href="{{ url_for("accounts_page") }}">去关注公众号</a>';
+            } else {
+                emptyMsg.textContent = '该分组暂无文章';
+                emptyHint.innerHTML = '文章同步中，请稍候...';
+            }
             document.getElementById('emptyState').style.display = 'block';
             hasMore = false;
             return;
@@ -117,8 +201,9 @@ async function loadFeed(page) {
             container.appendChild(renderArticle(art));
         });
 
+        totalArticlesShown += data.articles.length;
         hasMore = data.has_more;
-        currentPage = page;
+        nextCursor = data.next_cursor;
 
         if (hasMore) {
             document.getElementById('loadMoreSection').style.display = 'block';
@@ -131,39 +216,128 @@ async function loadFeed(page) {
     }
 }
 
-function loadMore() {
-    if (!isLoading && hasMore) {
-        loadFeed(currentPage + 1);
+// ---- Load More (with on-demand backfill) ----
+async function loadMore() {
+    if (isLoading || !hasMore) return;
+
+    // Check if we need backfill: if we've shown most of the new articles
+    if (backfillAccounts.length > 0 && totalNewArticles > 0 &&
+        totalArticlesShown + FEED_PAGE_SIZE > totalNewArticles) {
+        await doBackfill();
+    }
+
+    await loadFeed();
+}
+
+// ---- Auto Sync (background, on page load / tab switch) ----
+async function syncFeed() {
+    if (isSyncing || !currentGroupId) return;
+    isSyncing = true;
+
+    const indicator = document.getElementById('syncIndicator');
+    indicator.style.display = 'inline';
+
+    try {
+        const resp = await fetch('/api/feed/refresh', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({force: false, group_id: currentGroupId}),
+        });
+        const data = await resp.json();
+
+        if (data.need_wx_login) {
+            indicator.style.display = 'none';
+            return;
+        }
+
+        totalNewArticles = data.fetched || 0;
+        backfillAccounts = data.backfill_accounts || [];
+
+        // If new articles were fetched, reload the feed from scratch
+        if (data.fetched > 0) {
+            nextCursor = null;
+            hasMore = true;
+            totalArticlesShown = 0;
+            document.getElementById('feedContainer').innerHTML = '';
+            document.getElementById('emptyState').style.display = 'none';
+            document.getElementById('loadMoreSection').style.display = 'none';
+            await loadFeed();
+            showToast(`获取了 ${data.fetched} 篇新文章`);
+        }
+    } catch (e) {
+        console.error('Sync failed', e);
+    } finally {
+        isSyncing = false;
+        indicator.style.display = 'none';
     }
 }
 
+// ---- On-demand Backfill ----
+async function doBackfill() {
+    if (backfillAccounts.length === 0) return;
+
+    try {
+        const resp = await fetch('/api/feed/backfill', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({accounts: backfillAccounts}),
+        });
+        const data = await resp.json();
+        if (data.fetched > 0) {
+            totalNewArticles += data.fetched;
+        }
+        backfillAccounts = data.backfill_accounts || [];
+    } catch (e) {
+        console.error('Backfill failed', e);
+    }
+}
+
+// ---- Manual Refresh (force=true, bypasses cooldown) ----
 async function refreshFeed() {
+    if (isSyncing || !currentGroupId) return;
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
     btn.textContent = '刷新中...';
+    isSyncing = true;
 
     try {
-        const resp = await fetch('/api/feed/refresh', {method: 'POST'});
+        const resp = await fetch('/api/feed/refresh', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({force: true, group_id: currentGroupId}),
+        });
         const data = await resp.json();
+
         if (data.need_wx_login) {
             showToast('请先扫码登录微信');
             return;
         }
-        currentPage = 1;
+
+        totalNewArticles = data.fetched || 0;
+        backfillAccounts = data.backfill_accounts || [];
+
+        // Reload feed
+        nextCursor = null;
         hasMore = true;
+        totalArticlesShown = 0;
         document.getElementById('feedContainer').innerHTML = '';
         document.getElementById('emptyState').style.display = 'none';
         document.getElementById('loadMoreSection').style.display = 'none';
-        await loadFeed(1);
-        showToast(data.fetched > 0 ? `获取了 ${data.fetched} 篇新文章` : '没有新文章');
+        await loadFeed();
+
+        let msg = data.fetched > 0 ? `获取了 ${data.fetched} 篇新文章` : '没有新文章';
+        if (data.skipped > 0) msg += `（${data.skipped}个使用缓存）`;
+        showToast(msg);
     } catch (e) {
         showToast('刷新失败');
     } finally {
+        isSyncing = false;
         btn.disabled = false;
         btn.textContent = '刷新文章';
     }
 }
 
-loadFeed(1);
+// ---- Init ----
+loadGroups();
 </script>
 {% endblock %}

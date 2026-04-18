@@ -32,8 +32,23 @@ class Account(db.Model):
     alias = db.Column(db.String(200), default='')
     round_head_img = db.Column(db.String(500), default='')
     service_type = db.Column(db.Integer, default=0)
+    last_fetch_time = db.Column(db.DateTime, nullable=True)
 
     articles = db.relationship('Article', backref='account', lazy='dynamic')
+
+
+class AccountGroup(db.Model):
+    """User-defined group for organizing subscribed accounts"""
+    __tablename__ = 'account_groups'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    sort_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'name', name='uq_user_group_name'),
+    )
 
 
 class Subscription(db.Model):
@@ -42,9 +57,11 @@ class Subscription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
+    group_id = db.Column(db.Integer, db.ForeignKey('account_groups.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     account = db.relationship('Account')
+    group = db.relationship('AccountGroup')
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'account_id', name='uq_user_account'),
