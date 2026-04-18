@@ -6,4 +6,4 @@ data/
 .env
 *.log
 .secret_key
-.gitignore
+.vercel
