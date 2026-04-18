@@ -1,4 +1,5 @@
 import os
+import ssl
 import secrets
 import logging
 from dotenv import load_dotenv
@@ -52,10 +53,17 @@ class Config:
             SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace(
                 'postgresql://', 'postgresql+pg8000://', 1
             )
+        # SSL is required for Supabase Pooler connections (e.g. on Vercel).
+        _ssl_context = ssl.create_default_context()
+        _ssl_context.check_hostname = False
+        _ssl_context.verify_mode = ssl.CERT_NONE
         SQLALCHEMY_ENGINE_OPTIONS = {
             'pool_size': 5,
             'pool_recycle': 300,
             'pool_pre_ping': True,
+            'connect_args': {
+                'ssl_context': _ssl_context,
+            },
         }
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
