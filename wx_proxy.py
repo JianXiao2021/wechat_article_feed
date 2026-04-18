@@ -5,6 +5,7 @@ Based on the approach from wechat-article-exporter.
 """
 
 import json
+import logging
 import re
 import time
 import requests
@@ -12,6 +13,8 @@ from datetime import datetime, timedelta
 
 from config import Config
 from models import db, WxSession
+
+logger = logging.getLogger('wx_proxy')
 
 USER_AGENT = Config.WX_MP_USER_AGENT
 MP_BASE = 'https://mp.weixin.qq.com'
@@ -42,9 +45,14 @@ class WxMpClient:
         if not ws:
             return False
         if ws.expires_at and datetime.utcnow() > ws.expires_at:
+            logger.info('WxSession expired, deactivating')
             ws.is_active = False
             db.session.commit()
             return False
+        # If within 1 day of expiry, validate and try to extend
+        if ws.expires_at and (ws.expires_at - datetime.utcnow()).total_seconds() < 86400:
+            logger.info('WxSession close to expiry, validating...')
+            return self.validate_session()
         return True
 
     @property
@@ -56,6 +64,32 @@ class WxMpClient:
             'created_at': ws.created_at.isoformat() if ws.created_at else None,
             'expires_at': ws.expires_at.isoformat() if ws.expires_at else None,
         }
+
+    def validate_session(self):
+        """Check if the current session is still valid by making a lightweight request."""
+        ws = self._get_active_session()
+        if not ws:
+            return False
+
+        try:
+            resp = self._make_request('GET', f'{MP_BASE}/cgi-bin/home', params={
+                't': 'home/index',
+                'token': ws.token,
+                'lang': 'zh_CN',
+            })
+            if resp and resp.status_code == 200 and 'token' in resp.text:
+                ws.expires_at = datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS)
+                db.session.commit()
+                logger.info('WxSession validated and extended to %s', ws.expires_at)
+                return True
+            else:
+                logger.warning('WxSession validation failed, deactivating')
+                ws.is_active = False
+                db.session.commit()
+                return False
+        except Exception:
+            logger.exception('Error validating WxSession')
+            return False
 
     # ---- Login flow ----
     # The complete WeChat MP login flow (from wechat-article-exporter):
@@ -103,14 +137,14 @@ class WxMpClient:
                 'f': 'json',
                 'ajax': 1,
             },
+            timeout=15,
         )
 
-        # Log the startlogin response for debugging
         try:
             startlogin_data = resp.json()
-            print(f'[WX Login] startlogin response: {startlogin_data}')
+            logger.info('startlogin response: %s', startlogin_data)
         except Exception:
-            print(f'[WX Login] startlogin response (non-json): {resp.status_code}')
+            logger.warning('startlogin non-json response: status=%s', resp.status_code)
 
         # Step 2: GET the QR code image (uuid cookie is now in the session)
         qr_resp = sess.get(
@@ -119,11 +153,12 @@ class WxMpClient:
                 'action': 'getqrcode',
                 'random': int(time.time() * 1000),
             },
+            timeout=15,
         )
 
         # Collect ALL cookies from the session (including uuid from startlogin)
         all_cookies = '; '.join(f'{k}={v}' for k, v in sess.cookies.items())
-        print(f'[WX Login] cookies after qrcode: {list(sess.cookies.keys())}')
+        logger.debug('cookies after qrcode: %s', list(sess.cookies.keys()))
 
         return {
             'qrcode': qr_resp.content,
@@ -148,21 +183,27 @@ class WxMpClient:
             'Cookie': cookies_str,
         }
 
-        resp = requests.get(
-            f'{MP_BASE}/cgi-bin/scanloginqrcode',
-            params={
-                'action': 'ask',
-                'token': '',
-                'lang': 'zh_CN',
-                'f': 'json',
-                'ajax': 1,
-            },
-            headers=headers,
-        )
+        try:
+            resp = requests.get(
+                f'{MP_BASE}/cgi-bin/scanloginqrcode',
+                params={
+                    'action': 'ask',
+                    'token': '',
+                    'lang': 'zh_CN',
+                    'f': 'json',
+                    'ajax': 1,
+                },
+                headers=headers,
+                timeout=15,
+            )
+        except requests.exceptions.RequestException as e:
+            logger.warning('check_scan_status request failed: %s', e)
+            return {'status': -1, 'msg': 'Request failed'}
 
         try:
             data = resp.json()
         except Exception:
+            logger.warning('check_scan_status non-json response: %s', resp.status_code)
             return {'status': -1, 'msg': 'Failed to parse response'}
 
         return {
@@ -191,7 +232,7 @@ class WxMpClient:
                     k, v = part.split('=', 1)
                     sess.cookies.set(k, v)
 
-        print(f'[WX Login] confirm_login cookies: {list(sess.cookies.keys())}')
+        logger.debug('confirm_login cookies: %s', list(sess.cookies.keys()))
 
         resp = sess.post(
             f'{MP_BASE}/cgi-bin/bizlogin',
@@ -208,41 +249,44 @@ class WxMpClient:
                 'f': 'json',
                 'ajax': 1,
             },
+            timeout=15,
         )
 
         try:
             data = resp.json()
         except Exception:
-            print(f'[WX Login] confirm_login non-json response: {resp.status_code} {resp.text[:500]}')
+            logger.error('confirm_login non-json response: %s %s', resp.status_code, resp.text[:500])
             return {'success': False, 'msg': '登录响应解析失败'}
 
-        print(f'[WX Login] bizlogin response: {data}')
+        logger.info('bizlogin response: %s', data)
 
         redirect_url = data.get('redirect_url', '')
         if not redirect_url:
             ret = data.get('base_resp', {}).get('ret', '')
             err_msg = data.get('base_resp', {}).get('err_msg', '')
+            logger.warning('Login failed: ret=%s, err=%s', ret, err_msg)
             return {'success': False, 'msg': f'登录失败 (ret={ret}, err={err_msg})'}
 
         # Extract token from redirect_url
         token_match = re.search(r'token=(\d+)', redirect_url)
         if not token_match:
+            logger.error('Could not extract token from redirect_url: %s', redirect_url)
             return {'success': False, 'msg': '无法从重定向URL中提取token'}
 
         token = token_match.group(1)
 
         # Collect ALL cookies after login (session cookies from set-cookie are auto-merged)
         all_cookies = '; '.join(f'{k}={v}' for k, v in sess.cookies.items())
-        print(f'[WX Login] login success, token={token}, cookies: {list(sess.cookies.keys())}')
+        logger.info('login success, token=%s, cookies: %s', token, list(sess.cookies.keys()))
 
         # Deactivate old sessions
         WxSession.query.filter_by(is_active=True).update({'is_active': False})
 
-        # Save new session (WeChat sessions typically last ~4 days)
+        # Save new session (extend to 7 days; actual validity depends on WeChat server)
         ws = WxSession(
             token=token,
             cookies=all_cookies,
-            expires_at=datetime.utcnow() + timedelta(days=4),
+            expires_at=datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS),
             is_active=True,
         )
         db.session.add(ws)
@@ -274,12 +318,15 @@ class WxMpClient:
             'Cookie': ws.cookies,
         }
 
-        if method == 'GET':
-            resp = requests.get(url, params=params, headers=headers)
-        else:
-            resp = requests.post(url, params=params, data=data, headers=headers)
-
-        return resp
+        try:
+            if method == 'GET':
+                resp = requests.get(url, params=params, headers=headers, timeout=15)
+            else:
+                resp = requests.post(url, params=params, data=data, headers=headers, timeout=15)
+            return resp
+        except requests.exceptions.RequestException as e:
+            logger.error('Request failed: %s %s - %s', method, url, e)
+            return None
 
     def _get_account_info(self):
         """Get info about the logged-in MP account."""
@@ -324,19 +371,23 @@ class WxMpClient:
         })
 
         if not resp:
+            logger.warning('search_account request returned None for keyword=%s', keyword)
             return None
 
         try:
             data = resp.json()
         except Exception:
+            logger.error('search_account non-json response: %s', resp.status_code)
             return None
 
         if data.get('base_resp', {}).get('ret') == 200003:
+            logger.warning('search_account: session expired (200003)')
             ws.is_active = False
             db.session.commit()
             return None
 
         if data.get('base_resp', {}).get('ret') != 0:
+            logger.warning('search_account error: %s', data.get('base_resp'))
             return None
 
         return data.get('list', [])
@@ -364,19 +415,23 @@ class WxMpClient:
         })
 
         if not resp:
+            logger.warning('get_article_list request returned None for fakeid=%s', fakeid)
             return None
 
         try:
             data = resp.json()
         except Exception:
+            logger.error('get_article_list non-json response: %s', resp.status_code)
             return None
 
         if data.get('base_resp', {}).get('ret') == 200003:
+            logger.warning('get_article_list: session expired (200003)')
             ws.is_active = False
             db.session.commit()
             return None
 
         if data.get('base_resp', {}).get('ret') != 0:
+            logger.warning('get_article_list error: %s', data.get('base_resp'))
             return None
 
         try:
@@ -399,7 +454,8 @@ class WxMpClient:
                 'is_completed': is_completed,
                 'total_count': total_count,
             }
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error('get_article_list parse error: %s', e)
             return None
 
 

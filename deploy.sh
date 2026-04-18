@@ -22,19 +22,35 @@ echo ">>> 激活虚拟环境并安装依赖..."
 source venv/bin/activate
 pip install -r requirements.txt --quiet
 
-# Load .env file
+# Load .env file or create one
 if [ ! -f ".env" ]; then
-    echo "错误: 未找到 .env 文件。请先复制模板并填写凭证："
-    echo "  cp .env.example .env"
-    echo "  # 然后编辑 .env 填入 DATABASE_URL 等信息"
-    exit 1
+    echo ""
+    echo "未找到 .env 文件，请选择数据库存储方式："
+    echo "  1) 本地 SQLite（无需外部数据库，推荐新手使用）"
+    echo "  2) Supabase PostgreSQL（云端数据库，需要注册 Supabase）"
+    echo ""
+    read -p "请选择 [1/2] (默认: 1): " choice
+    choice=${choice:-1}
+
+    if [ "$choice" = "2" ]; then
+        cp .env.example .env
+        echo ""
+        echo "请编辑 .env 文件，填入 DATABASE_URL（Supabase 连接字符串）"
+        echo "  nano .env"
+        echo ""
+        echo "填写完成后重新运行: bash deploy.sh"
+        exit 0
+    else
+        echo "DB_TYPE=local" > .env
+        echo ">>> 已选择本地 SQLite 存储"
+    fi
 fi
-export $(grep -v '^#' .env | xargs)
+export $(grep -v '^#' .env | grep -v '^\s*$' | xargs)
 
 # Generate a persistent secret key if not set
 if [ -z "$SECRET_KEY" ]; then
     echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-    export $(grep -v '^#' .env | xargs)
+    export $(grep -v '^#' .env | grep -v '^\s*$' | xargs)
     echo ">>> 已自动生成 SECRET_KEY 并追加到 .env"
 fi
 
@@ -46,6 +62,7 @@ PORT=${PORT:-5000}
 
 echo ""
 echo "=== 启动服务 ==="
+echo "数据库模式: ${DB_TYPE:-auto}"
 echo "访问地址: http://0.0.0.0:${PORT}"
 echo "如在服务器上部署，请用 http://你的服务器IP:${PORT} 访问"
 echo "按 Ctrl+C 停止服务"

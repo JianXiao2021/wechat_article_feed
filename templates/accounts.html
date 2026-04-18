@@ -17,6 +17,24 @@
 
 <div style="height:1px;background:var(--border);"></div>
 
+<!-- Group management section -->
+<div class="group-section">
+    <div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:0.875rem;font-weight:500;">分组管理</span>
+        <button class="btn btn-small btn-outline" onclick="showCreateGroup()">+ 新建分组</button>
+    </div>
+    <div id="createGroupForm" style="display:none;padding:0 16px 12px;">
+        <div class="input-row">
+            <input type="text" id="newGroupName" placeholder="输入分组名称" onkeydown="if(event.key==='Enter')createGroup()">
+            <button class="btn btn-primary btn-small" onclick="createGroup()">创建</button>
+            <button class="btn btn-small btn-outline" onclick="hideCreateGroup()">取消</button>
+        </div>
+    </div>
+    <div id="groupList"></div>
+</div>
+
+<div style="height:1px;background:var(--border);"></div>
+
 <!-- Subscribed accounts list -->
 <div id="accountsList"></div>
 <div class="loading" id="loadingIndicator" style="display:none;">
@@ -33,6 +51,8 @@
 
 {% block extra_scripts %}
 <script>
+let allGroups = [];
+
 function showToast(msg, duration) {
     const toast = document.getElementById('toast');
     toast.textContent = msg;
@@ -44,6 +64,135 @@ function proxyImg(url) {
     if (!url) return '';
     return '/api/proxy/image?url=' + encodeURIComponent(url);
 }
+
+// ---- Group management ----
+
+function showCreateGroup() {
+    document.getElementById('createGroupForm').style.display = 'block';
+    document.getElementById('newGroupName').focus();
+}
+
+function hideCreateGroup() {
+    document.getElementById('createGroupForm').style.display = 'none';
+    document.getElementById('newGroupName').value = '';
+}
+
+async function loadGroups() {
+    try {
+        const resp = await fetch('/api/groups');
+        allGroups = await resp.json();
+        renderGroupList();
+    } catch (e) {
+        console.error('Failed to load groups', e);
+    }
+}
+
+function renderGroupList() {
+    const container = document.getElementById('groupList');
+    if (allGroups.length === 0) {
+        container.innerHTML = '<p style="padding:0 16px 12px;font-size:0.8125rem;color:var(--text-secondary);">暂无分组，点击上方按钮创建</p>';
+        return;
+    }
+    container.innerHTML = '';
+    allGroups.forEach(g => {
+        const item = document.createElement('div');
+        item.className = 'group-item';
+        const isDefault = g.name === '默认';
+        item.innerHTML = `
+            <span class="group-name">${g.name}</span>
+            <span class="group-count">${g.account_count} 个公众号</span>
+            <button class="btn btn-small btn-outline" onclick="renameGroup(${g.id}, '${g.name.replace(/'/g, "\\'")}')">重命名</button>
+            ${isDefault ? '' : `<button class="btn btn-small btn-outline" style="color:var(--danger);border-color:var(--danger);" onclick="deleteGroup(${g.id}, '${g.name.replace(/'/g, "\\'")}')">删除</button>`}
+        `;
+        container.appendChild(item);
+    });
+}
+
+async function createGroup() {
+    const name = document.getElementById('newGroupName').value.trim();
+    if (!name) {
+        showToast('请输入分组名称');
+        return;
+    }
+    try {
+        const resp = await fetch('/api/groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name}),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('分组创建成功');
+            hideCreateGroup();
+            loadGroups();
+            loadAccounts();
+        } else {
+            showToast(data.msg);
+        }
+    } catch (e) {
+        showToast('创建失败');
+    }
+}
+
+async function renameGroup(groupId, oldName) {
+    const newName = prompt('请输入新的分组名称', oldName);
+    if (!newName || newName.trim() === oldName) return;
+    try {
+        const resp = await fetch(`/api/groups/${groupId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: newName.trim()}),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('重命名成功');
+            loadGroups();
+            loadAccounts();
+        } else {
+            showToast(data.msg);
+        }
+    } catch (e) {
+        showToast('重命名失败');
+    }
+}
+
+async function deleteGroup(groupId, name) {
+    if (!confirm(`确定删除分组「${name}」吗？该分组下的公众号不会被取消关注。`)) return;
+    try {
+        const resp = await fetch(`/api/groups/${groupId}`, {method: 'DELETE'});
+        const data = await resp.json();
+        if (data.success) {
+            showToast('已删除分组');
+            loadGroups();
+            loadAccounts();
+        } else {
+            showToast(data.msg);
+        }
+    } catch (e) {
+        showToast('删除失败');
+    }
+}
+
+async function setAccountGroup(accountId, groupId) {
+    try {
+        const resp = await fetch(`/api/accounts/${accountId}/group`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({group_id: groupId || null}),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('分组已更新');
+            loadGroups();
+        } else {
+            showToast(data.msg);
+        }
+    } catch (e) {
+        showToast('设置分组失败');
+    }
+}
+
+// ---- Account search & subscribe ----
 
 async function searchAccount() {
     const keyword = document.getElementById('searchKeyword').value.trim();
@@ -136,6 +285,7 @@ async function unsubscribe(accountId, name) {
         if (data.success) {
             showToast('已取消关注');
             loadAccounts();
+            loadGroups();
         }
     } catch (e) {
         showToast('操作失败');
@@ -166,12 +316,20 @@ async function loadAccounts() {
         accounts.forEach(acct => {
             const card = document.createElement('div');
             card.className = 'account-card';
+
+            let groupOptions = '';
+            allGroups.forEach(g => {
+                const selected = acct.group_id === g.id ? 'selected' : '';
+                groupOptions += `<option value="${g.id}" ${selected}>${g.name}</option>`;
+            });
+
             card.innerHTML = `
                 <img class="avatar" src="${proxyImg(acct.round_head_img)}" onerror="this.style.background='var(--border)'">
                 <div class="info">
                     <div class="name">${acct.nickname}</div>
-                    <div class="detail">${acct.alias ? '@' + acct.alias + ' · ' : ''}${acct.article_count} 篇文章</div>
+                    <div class="detail">${acct.alias ? '@' + acct.alias : ''}</div>
                 </div>
+                <select class="group-select" onchange="setAccountGroup(${acct.id}, this.value)">${groupOptions}</select>
                 <button class="btn btn-small btn-outline" onclick="unsubscribe(${acct.id}, '${acct.nickname.replace(/'/g, "\\'")}')">取消关注</button>
             `;
             container.appendChild(card);
@@ -182,6 +340,8 @@ async function loadAccounts() {
     }
 }
 
+// Init
+loadGroups();
 loadAccounts();
 </script>
 {% endblock %}
