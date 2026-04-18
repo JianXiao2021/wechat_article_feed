@@ -10,7 +10,9 @@ _logger = logging.getLogger('config')
 
 
 class Config:
-    # --- SECRET_KEY (persistent across gunicorn workers) ---
+    # --- SECRET_KEY ---
+    # On Vercel (read-only filesystem), SECRET_KEY must be set as an environment variable.
+    # File-based fallback is kept for local development only.
     SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:
         _key_file = os.path.join(BASE_DIR, '.secret_key')
@@ -23,8 +25,9 @@ class Config:
                 with open(_key_file, 'w') as _f:
                     _f.write(SECRET_KEY)
             except OSError:
-                pass
-        _logger.warning('SECRET_KEY not set in environment, using file-based key.')
+                # Read-only filesystem (e.g. Vercel) — use the generated key in memory
+                _logger.warning('Cannot write .secret_key (read-only FS), using in-memory key.')
+        _logger.warning('SECRET_KEY not set in environment, using file-based or in-memory key.')
 
     # --- Database: local SQLite or Supabase PostgreSQL ---
     DB_TYPE = os.environ.get('DB_TYPE', 'auto')  # 'local', 'supabase', or 'auto'
