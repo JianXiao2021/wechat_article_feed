@@ -306,8 +306,12 @@ def api_set_account_group(account_id):
 @app.route('/api/accounts')
 @login_required
 def api_get_accounts():
-    """Get user's subscribed accounts."""
-    subs = Subscription.query.filter_by(user_id=current_user.id).all()
+    """Get user's subscribed accounts. Optional group_id filter."""
+    group_id = request.args.get('group_id', type=int)
+    sub_query = Subscription.query.filter_by(user_id=current_user.id)
+    if group_id is not None:
+        sub_query = sub_query.filter_by(group_id=group_id)
+    subs = sub_query.all()
     accounts = []
     for sub in subs:
         acc = sub.account
@@ -541,6 +545,48 @@ def api_feed_refresh():
         'skipped': skipped,
         'backfill_accounts': backfill_accounts,
     })
+
+
+@app.route('/api/feed/refresh_account', methods=['POST'])
+@login_required
+def api_feed_refresh_account():
+    """Refresh articles for a single account.
+
+    Frontend calls this per-account to avoid long-running requests on Vercel.
+    """
+    if not wx_client.is_logged_in:
+        return jsonify({'success': False, 'msg': '微信未登录', 'need_wx_login': True})
+
+    account_id = request.json.get('account_id')
+    force = request.json.get('force', False)
+    if not account_id:
+        return jsonify({'success': False, 'msg': '缺少 account_id'})
+
+    # Verify user owns this account
+    sub = Subscription.query.filter_by(
+        user_id=current_user.id, account_id=account_id).first()
+    if not sub:
+        return jsonify({'success': False, 'msg': '未订阅此公众号'})
+
+    account = sub.account
+    try:
+        new_count, hit_cache = _fetch_articles_for_account(
+            account, begin=0, max_pages=1, force=force)
+        skipped = new_count == -1
+        fetched = max(new_count, 0)
+        backfill_needed = not hit_cache and new_count >= Config.ARTICLE_PAGE_SIZE
+        logger.info('Refresh account %s: fetched=%d skipped=%s',
+                    account.nickname, fetched, skipped)
+        return jsonify({
+            'success': True,
+            'fetched': fetched,
+            'skipped': skipped,
+            'backfill': {'account_id': account_id,
+                         'next_begin': Config.ARTICLE_PAGE_SIZE} if backfill_needed else None,
+        })
+    except Exception:
+        logger.exception('Error refreshing account %s', account.nickname)
+        return jsonify({'success': False, 'msg': f'获取 {account.nickname} 文章失败'}), 500
 
 
 @app.route('/api/feed/backfill', methods=['POST'])

@@ -229,6 +229,58 @@ async function loadMore() {
     await loadFeed();
 }
 
+// ---- Helpers for concurrent refresh ----
+// Fire requests with 1s stagger; render as each response arrives.
+function staggeredRefresh(accounts, force, syncGroupId) {
+    let doneCount = 0;
+    let totalFetched = 0;
+    let totalSkipped = 0;
+    let hasNewArticles = false;
+    const indicator = document.getElementById('syncIndicator');
+
+    return new Promise(resolve => {
+        function onDone() {
+            doneCount++;
+            indicator.textContent = `同步中 ${doneCount}/${accounts.length}...`;
+            if (doneCount >= accounts.length) {
+                resolve({totalFetched, totalSkipped});
+            }
+        }
+
+        accounts.forEach((acct, i) => {
+            // Stagger: request i fires at i*1000 ms
+            setTimeout(() => {
+                if (syncGroupId !== currentGroupId) { onDone(); return; }
+
+                fetch('/api/feed/refresh_account', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({account_id: acct.id, force: force}),
+                })
+                .then(r => r.json())
+                .then(async data => {
+                    if (syncGroupId !== currentGroupId) return;
+                    if (data.skipped) totalSkipped++;
+                    if (data.backfill) backfillAccounts.push(data.backfill);
+                    if (data.fetched > 0) {
+                        totalFetched += data.fetched;
+                        // Reload feed to show new articles
+                        nextCursor = null;
+                        hasMore = true;
+                        totalArticlesShown = 0;
+                        document.getElementById('feedContainer').innerHTML = '';
+                        document.getElementById('emptyState').style.display = 'none';
+                        document.getElementById('loadMoreSection').style.display = 'none';
+                        await loadFeed();
+                    }
+                })
+                .catch(e => console.error('Refresh failed', acct.nickname, e))
+                .finally(() => onDone());
+            }, i * 1000);
+        });
+    });
+}
+
 // ---- Auto Sync (background, on page load / tab switch) ----
 async function syncFeed() {
     if (isSyncing || !currentGroupId) return;
@@ -236,33 +288,16 @@ async function syncFeed() {
 
     const indicator = document.getElementById('syncIndicator');
     indicator.style.display = 'inline';
+    indicator.textContent = '同步中...';
 
     try {
-        const resp = await fetch('/api/feed/refresh', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({force: false, group_id: currentGroupId}),
-        });
-        const data = await resp.json();
+        const acctResp = await fetch(`/api/accounts?group_id=${currentGroupId}`);
+        const accounts = await acctResp.json();
+        if (!accounts.length) { indicator.style.display = 'none'; isSyncing = false; return; }
 
-        if (data.need_wx_login) {
-            indicator.style.display = 'none';
-            return;
-        }
-
-        totalNewArticles = data.fetched || 0;
-        backfillAccounts = data.backfill_accounts || [];
-
-        // If new articles were fetched, reload the feed from scratch
-        if (data.fetched > 0) {
-            nextCursor = null;
-            hasMore = true;
-            totalArticlesShown = 0;
-            document.getElementById('feedContainer').innerHTML = '';
-            document.getElementById('emptyState').style.display = 'none';
-            document.getElementById('loadMoreSection').style.display = 'none';
-            await loadFeed();
-            showToast(`获取了 ${data.fetched} 篇新文章`);
+        const {totalFetched} = await staggeredRefresh(accounts, false, currentGroupId);
+        if (totalFetched > 0) {
+            showToast(`获取了 ${totalFetched} 篇新文章`);
         }
     } catch (e) {
         console.error('Sync failed', e);
@@ -300,33 +335,20 @@ async function refreshFeed() {
     btn.textContent = '刷新中...';
     isSyncing = true;
 
+    const indicator = document.getElementById('syncIndicator');
+    indicator.style.display = 'inline';
+    indicator.textContent = '同步中...';
+    backfillAccounts = [];
+
     try {
-        const resp = await fetch('/api/feed/refresh', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({force: true, group_id: currentGroupId}),
-        });
-        const data = await resp.json();
+        const acctResp = await fetch(`/api/accounts?group_id=${currentGroupId}`);
+        const accounts = await acctResp.json();
 
-        if (data.need_wx_login) {
-            showToast('请先扫码登录微信');
-            return;
-        }
+        const {totalFetched, totalSkipped} = await staggeredRefresh(accounts, true, currentGroupId);
 
-        totalNewArticles = data.fetched || 0;
-        backfillAccounts = data.backfill_accounts || [];
-
-        // Reload feed
-        nextCursor = null;
-        hasMore = true;
-        totalArticlesShown = 0;
-        document.getElementById('feedContainer').innerHTML = '';
-        document.getElementById('emptyState').style.display = 'none';
-        document.getElementById('loadMoreSection').style.display = 'none';
-        await loadFeed();
-
-        let msg = data.fetched > 0 ? `获取了 ${data.fetched} 篇新文章` : '没有新文章';
-        if (data.skipped > 0) msg += `（${data.skipped}个使用缓存）`;
+        totalNewArticles = totalFetched;
+        let msg = totalFetched > 0 ? `获取了 ${totalFetched} 篇新文章` : '没有新文章';
+        if (totalSkipped > 0) msg += `（${totalSkipped}个使用缓存）`;
         showToast(msg);
     } catch (e) {
         showToast('刷新失败');
@@ -334,6 +356,7 @@ async function refreshFeed() {
         isSyncing = false;
         btn.disabled = false;
         btn.textContent = '刷新文章';
+        indicator.style.display = 'none';
     }
 }
 
