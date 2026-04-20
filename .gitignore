@@ -6,4 +6,5 @@ data/
 .env
 *.log
 .secret_key
-.vercel
+.gitignore
+server.pid

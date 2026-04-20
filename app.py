@@ -550,10 +550,7 @@ def api_feed_refresh():
 @app.route('/api/feed/refresh_account', methods=['POST'])
 @login_required
 def api_feed_refresh_account():
-    """Refresh articles for a single account.
-
-    Frontend calls this per-account to avoid long-running requests on Vercel.
-    """
+    """Refresh articles for a single account."""
     if not wx_client.is_logged_in:
         return jsonify({'success': False, 'msg': '微信未登录', 'need_wx_login': True})
 

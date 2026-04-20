@@ -1,5 +1,4 @@
 import os
-import ssl
 import secrets
 import logging
 from dotenv import load_dotenv
@@ -11,9 +10,7 @@ _logger = logging.getLogger('config')
 
 
 class Config:
-    # --- SECRET_KEY ---
-    # On Vercel (read-only filesystem), SECRET_KEY must be set as an environment variable.
-    # File-based fallback is kept for local development only.
+    # --- SECRET_KEY (persistent across gunicorn workers) ---
     SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:
         _key_file = os.path.join(BASE_DIR, '.secret_key')
@@ -26,9 +23,8 @@ class Config:
                 with open(_key_file, 'w') as _f:
                     _f.write(SECRET_KEY)
             except OSError:
-                # Read-only filesystem (e.g. Vercel) — use the generated key in memory
-                _logger.warning('Cannot write .secret_key (read-only FS), using in-memory key.')
-        _logger.warning('SECRET_KEY not set in environment, using file-based or in-memory key.')
+                pass
+        _logger.warning('SECRET_KEY not set in environment, using file-based key.')
 
     # --- Database: local SQLite or Supabase PostgreSQL ---
     DB_TYPE = os.environ.get('DB_TYPE', 'auto')  # 'local', 'supabase', or 'auto'
@@ -53,17 +49,10 @@ class Config:
             SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace(
                 'postgresql://', 'postgresql+pg8000://', 1
             )
-        # SSL is required for Supabase Pooler connections (e.g. on Vercel).
-        _ssl_context = ssl.create_default_context()
-        _ssl_context.check_hostname = False
-        _ssl_context.verify_mode = ssl.CERT_NONE
         SQLALCHEMY_ENGINE_OPTIONS = {
             'pool_size': 5,
             'pool_recycle': 300,
             'pool_pre_ping': True,
-            'connect_args': {
-                'ssl_context': _ssl_context,
-            },
         }
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
