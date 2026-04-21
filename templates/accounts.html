@@ -341,7 +341,6 @@ async function loadAccounts() {
 }
 
 // Init
-loadGroups();
-loadAccounts();
+loadGroups().then(() => loadAccounts());
 </script>
 {% endblock %}
