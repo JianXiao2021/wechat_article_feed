@@ -14,8 +14,16 @@
 ## 效果预览
 
 - 信息流：所有文章按时间倒序排列，分组查看
+
+<img src='./img/feed.png'>
+
 - 关注管理：搜索公众号名称一键关注，自定义分组
+
+<img src='./img/accounts.png'>
+
 - 阅读历史：自动记录已读文章
+
+<img src='./img/history.png'>
 
 ## 部署指南
 
