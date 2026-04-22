@@ -6,10 +6,9 @@
 
 为了解决这两大痛点，我（让 Claude Code）做了这个免费、开源的微信公众号阅读器。你可以关注你喜欢的公众号，并在浏览器网页里按时间顺序阅读所有文章。
 
-**完全免费** — 不需要购买服务器，不需要任何付费服务。在手机上即可一键部署：
-- **安卓手机**：安装 Termux 应用
-- **iPhone/iPad**：安装 iSH Shell 应用
-然后在手机浏览器打开即可使用。
+**完全免费** — 不需要购买服务器，不需要任何付费服务。部署方式如下：
+- **安卓手机**：安装 Termux 应用，在手机上直接使用
+- **iPhone/iPad**：在电脑上部署，手机通过 Wi-Fi 访问
 
 ## 效果预览
 
@@ -27,12 +26,10 @@
 
 ## 部署指南
 
-整个过程大约需要 15 分钟，只需要完成两件事：
+整个过程大约需要 15-20 分钟。根据你的设备选择对应的方式：
 
-1. 注册微信公众号（用于获取文章的通道）
-2. 在手机上安装终端应用并部署：
-   - **安卓手机**：使用 Termux（参考下方安卓用户指南）
-   - **iPhone/iPad**：使用 iSH Shell（参考下方 iOS 用户指南）
+- **安卓手机用户**：参考下方「安卓用户指南」
+- **iPhone/iPad 用户**：参考下方「iPhone 用户指南」
 
 ---
 
@@ -195,100 +192,222 @@ bash ~/wechat-reader/stop_server.sh
 
 ## iOS 用户指南
 
-如果你使用的是 iPhone 或 iPad，Termux（安卓专用）无法安装。你有以下几种选择：
+由于 iOS 系统对后台应用有严格限制，无法在 iPhone 上直接运行服务。**请在电脑上部署服务，然后用 iPhone 访问。**
 
-### 方案一：使用 iSH Shell（推荐）
+### 前置要求
 
-iSH 是一个 iOS 终端模拟器，可以在 iPhone 上运行 Linux 命令。**完全免费**，可以从 App Store 直接下载。
+1. 一台电脑（Windows、Mac、Linux 均可）
+2. 电脑和 iPhone 连接**同一个 Wi-Fi 网络**
+3. 参考「电脑部署指南」完成部署
 
-#### 1. 安装 iSH
+### 在 iPhone 上访问
 
-1. 打开 App Store
-2. 搜索「iSH Shell」（注意不是 iSH Classic）
-3. 下载并安装
+1. 确保电脑上的服务已启动
+2. 查看**电脑的 IP 地址**（参考下方说明）
+3. 在 iPhone Safari 浏览器中输入：`http://电脑IP地址:5000`
 
-#### 2. 安装依赖
+**查看电脑 IP 的方法：**
+- **Windows**：
+  1. 按 `Win + R` 键，输入 `cmd` 按回车
+  2. 在黑色窗口中输入 `ipconfig` 按回车
+  3. 找到「无线局域网适配器 WLAN」下的「IPv4 地址」
+- **Mac**：
+  1. 打开「终端」应用
+  2. 输入 `ifconfig` 按回车
+  3. 找到 `en0` 下的 `inet` 地址
+- **Linux**：
+  1. 打开终端
+  2. 输入 `ip addr` 按回车
+  3. 找到 `wlp` 或 `wlan` 开头下的 `inet` 地址
 
-打开 iSH 应用，执行以下命令：
+**添加到主屏幕：**
+1. 在 Safari 打开网页后，点击底部分享按钮
+2. 选择「添加到主屏幕」
+3. 点击「添加」
+4. 之后就可以像 APP 一样直接打开使用了
 
-```bash
-# 更新软件源
-apk update
+---
 
-# 安装 Python 和 Git
-apk add python3 git
+## 电脑部署指南
 
-# 安装 pip（Python 包管理器）
-apk add py3-pip
+如果你使用 iPhone，或者希望在电脑上使用，请按照以下步骤部署。整个过程不需要编程基础，只要会复制粘贴命令即可。
 
-# 验证安装
-python3 --version
+### 第一步：注册微信公众号
+
+你需要一个微信公众号账号来登录微信公众号后台，这是获取文章的唯一通道。**个人订阅号**即可，完全免费。
+
+1. 在电脑浏览器打开 https://mp.weixin.qq.com
+2. 点击右上角「立即注册」
+3. 选择「订阅号」
+4. 按提示填写邮箱、密码、身份信息，完成注册
+
+> 如果你已经有微信公众号，跳过此步。
+
+---
+
+### 第二步：检查并安装 Python
+
+1. 打开命令行工具：
+   - **Windows**：按 `Win + R`，输入 `cmd` 按回车
+   - **Mac/Linux**：打开「终端」应用
+
+2. 输入以下命令检查 Python 是否已安装：
+   ```
+   python --version
+   ```
+   或者：
+   ```
+   python3 --version
+   ```
+
+3. 如果显示版本号（如 `Python 3.x.x`），说明已安装，跳到第三步。
+
+4. 如果提示命令不存在，需要安装 Python：
+   - **Windows**：访问 https://www.python.org/downloads/ 下载最新版，安装时**务必勾选「Add Python to PATH」**
+   - **Mac**：已内置 Python 3，输入 `python3 --version` 查看
+   - **Linux (Ubuntu/Debian)**：运行 `sudo apt install python3`
+   - **Linux (CentOS/Fedora)**：运行 `sudo dnf install python3`
+
+---
+
+### 第三步：安装 Git
+
+Git 用于下载项目代码。
+
+**Windows：**
+1. 访问 https://git-scm.com/download/win 下载安装包
+2. 运行安装程序，一路点击「Next」使用默认选项
+3. 安装完成后，重新打开命令行窗口
+
+**Mac：**
+在终端输入：
+```
+git --version
+```
+如果已安装会显示版本号。如果没有，会提示安装 Xcode Command Line Tools，按提示安装即可。
+
+**Linux：**
+- Ubuntu/Debian：`sudo apt install git`
+- CentOS/Fedora：`sudo dnf install git`
+
+---
+
+### 第四步：下载项目代码
+
+**使用国内镜像加速下载（推荐）**
+
+在命令行中执行以下命令：
+
+```
+git clone https://ghfast.top/https://github.com/JianXiao2021/wechat_article_feed.git wechat-reader
 ```
 
-> 注意：iSH 使用 Alpine Linux 的包管理器 `apk`，与 Termux 的 `apt` 不同。
+> 如果提示失败，尝试以下其他镜像：
+> ```
+> git clone https://github.moeyy.xyz/https://github.com/JianXiao2021/wechat_article_feed.git wechat-reader
+> ```
+> ```
+> git clone https://mirror.ghproxy.com/https://github.com/JianXiao2021/wechat_article_feed.git wechat-reader
+> ```
 
-#### 3. 下载并部署
+如果所有镜像都失败，可以尝试直接下载 zip 包：
+1. 在浏览器打开：https://github.com/JianXiao2021/wechat_article_feed/archive/refs/heads/main.zip
+2. 下载后解压到任意目录，重命名文件夹为 `wechat-reader`
 
-```bash
-# 下载项目代码
-git clone https://github.com/JianXiao2021/wechat_article_feed.git ~/wechat-reader
+---
 
-# 进入项目目录
-cd ~/wechat-reader
+### 第五步：配置国内镜像源
 
-# 安装 Python 依赖
+为了让下载速度更快，先配置 Python 的国内镜像源。
+
+**Windows：**
+
+在命令行执行：
+```
+pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+pip config set install.trusted-host mirrors.aliyun.com
+```
+
+**Mac/Linux：**
+
+在终端执行：
+```
+pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+pip3 config set install.trusted-host mirrors.aliyun.com
+```
+
+> 如果提示 `pip command not found`，尝试用 `pip3` 代替 `pip`
+
+---
+
+### 第六步：安装依赖
+
+进入项目目录并安装所需库：
+
+**Windows：**
+```
+cd wechat-reader
+pip install -r requirements.txt
+```
+
+**Mac/Linux：**
+```
+cd wechat-reader
 pip3 install -r requirements.txt
 ```
 
-#### 4. 启动服务
+这一步可能需要几分钟，请耐心等待。
 
-```bash
+---
+
+### 第七步：启动服务
+
+在命令行执行：
+
+**Windows：**
+```
+python app.py
+```
+
+**Mac/Linux：**
+```
 python3 app.py
 ```
 
-启动成功后，在 Safari 浏览器打开 `http://127.0.0.1:5000`。
+看到以下提示说明启动成功：
+```
+ * Running on http://0.0.0.0:5000
+```
 
-#### 5. 日常使用注意事项
+---
 
-**iSH 后台限制：**
+### 第八步：在浏览器中打开
 
-与 Termux 不同，iOS 对后台运行有更严格的限制：
-- 切换到 Safari 后，iSH 会在短时间内被系统挂起
-- 要保持服务运行，需要让 iSH 保持在前台
+1. 打开浏览器（Chrome、Edge、Safari 等）
+2. 在地址栏输入：`http://127.0.0.1:5000`
+3. 按回车，即可开始使用
 
-**建议使用方案：**
-1. 将 iPhone 连接到电脑（Mac 或 PC），在电脑浏览器打开 `http://手机IP:5000` 使用
-2. 或考虑使用方案二：部署到云服务器
+**用手机访问（电脑和手机连同一个 Wi-Fi）：**
 
-#### 6. 查看 iPhone 的 IP 地址
+1. 查看电脑 IP 地址（参考 iPhone 用户指南中的说明）
+2. 在手机浏览器输入：`http://电脑IP:5000`
 
-1. 打开「设置」→「Wi-Fi」
-2. 点击当前连接的网络名称右侧的「ⓘ」
-3. 找到「IPv4 地址」，记下这个地址
+---
 
-在电脑浏览器访问：`http://这个IP地址:5000`
+### 日常使用
 
-### 方案二：部署到云服务器
+**启动服务：**
+每次重启电脑后，需要重新启动服务：
+1. 打开命令行
+2. 进入项目目录：`cd wechat-reader`
+3. 运行：`python app.py`（Windows）或 `python3 app.py`（Mac/Linux）
 
-如果你希望在 iOS 上无缝使用，建议将服务部署到云服务器：
+**关闭服务：**
+在命令行窗口按 `Ctrl + C` 即可停止服务。
 
-1. 选择免费的云服务：
-   - [Vercel](https://vercel.com) - 推荐，免费额度充足，自动 HTTPS
-   - [Railway](https://railway.app) - 提供 $5/月免费额度
-   - [Render](https://render.com) - 提供免费套餐
+---
 
-2. 按照下方「进阶：自建服务器部署」章节进行配置
-3. 部署后，在 Safari 浏览器直接访问云端地址即可
-
-> 使用云服务的好处：无需手机保持运行，随时随地访问，支持多人共享账号
-
-### 方案三：使用电脑部署
-
-如果你有电脑，也可以在电脑上部署服务：
-
-1. 在电脑上按照「进阶：自建服务器部署」中的「本地运行（SQLite 零配置）」章节操作
-2. 确保电脑和 iPhone 在同一个 Wi-Fi 网络
-3. 在 iPhone Safari 中访问 `http://电脑IP:5000`
+## 电脑部署指南
 
 查看电脑 IP 的方法：
 - **Windows**：打开命令提示符，输入 `ipconfig`，找到「IPv4 地址」
