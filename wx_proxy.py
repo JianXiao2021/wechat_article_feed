@@ -41,18 +41,16 @@ class WxMpClient:
 
     @property
     def is_logged_in(self):
+        """Check if there's an active session that hasn't expired."""
         ws = self._get_active_session()
         if not ws:
             return False
+        # Only expire if past due (don't pre-validate, let actual requests determine validity)
         if ws.expires_at and datetime.utcnow() > ws.expires_at:
             logger.info('WxSession expired, deactivating')
             ws.is_active = False
             db.session.commit()
             return False
-        # If within 1 day of expiry, validate and try to extend
-        if ws.expires_at and (ws.expires_at - datetime.utcnow()).total_seconds() < 86400:
-            logger.info('WxSession close to expiry, validating...')
-            return self.validate_session()
         return True
 
     @property
@@ -323,6 +321,12 @@ class WxMpClient:
                 resp = requests.get(url, params=params, headers=headers, timeout=15)
             else:
                 resp = requests.post(url, params=params, data=data, headers=headers, timeout=15)
+
+            # Auto-extend session on successful requests
+            if resp and resp.status_code == 200:
+                ws.expires_at = datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS)
+                db.session.commit()
+
             return resp
         except requests.exceptions.RequestException as e:
             logger.error('Request failed: %s %s - %s', method, url, e)

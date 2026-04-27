@@ -241,7 +241,10 @@ function staggeredRefresh(accounts, force, syncGroupId) {
     return new Promise(resolve => {
         function onDone() {
             doneCount++;
-            indicator.textContent = `同步中 ${doneCount}/${accounts.length}...`;
+            // Show progress only if actually fetching (not all skipped)
+            if (doneCount > totalSkipped) {
+                indicator.textContent = `同步中 ${doneCount - totalSkipped}/${accounts.length - totalSkipped}...`;
+            }
             if (doneCount >= accounts.length) {
                 resolve({totalFetched, totalSkipped});
             }
@@ -288,7 +291,7 @@ async function syncFeed() {
 
     const indicator = document.getElementById('syncIndicator');
     indicator.style.display = 'inline';
-    indicator.textContent = '同步中...';
+    indicator.textContent = '检查更新中...';
 
     try {
         const acctResp = await fetch(`/api/accounts?group_id=${currentGroupId}`);
@@ -337,7 +340,7 @@ async function refreshFeed() {
 
     const indicator = document.getElementById('syncIndicator');
     indicator.style.display = 'inline';
-    indicator.textContent = '同步中...';
+    indicator.textContent = '检查更新中...';
     backfillAccounts = [];
 
     try {
