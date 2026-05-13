@@ -9,7 +9,7 @@ import logging
 import re
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from config import Config
 from models import db, WxSession
@@ -47,7 +47,7 @@ class WxMpClient:
             return False
         # Only expire if past due (don't pre-validate, let actual requests determine validity)
         if ws.expires_at and datetime.utcnow() > ws.expires_at:
-            logger.info('WxSession expired, deactivating')
+            logger.info('WxSession expired locally, deactivating')
             ws.is_active = False
             db.session.commit()
             return False
@@ -76,9 +76,8 @@ class WxMpClient:
                 'lang': 'zh_CN',
             })
             if resp and resp.status_code == 200 and 'token' in resp.text:
-                ws.expires_at = datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS)
                 db.session.commit()
-                logger.info('WxSession validated and extended to %s', ws.expires_at)
+                logger.info('WxSession validated successfully')
                 return True
             else:
                 logger.warning('WxSession validation failed, deactivating')
@@ -280,11 +279,11 @@ class WxMpClient:
         # Deactivate old sessions
         WxSession.query.filter_by(is_active=True).update({'is_active': False})
 
-        # Save new session (extend to 7 days; actual validity depends on WeChat server)
+        # Save new session (actual validity depends on WeChat server)
         ws = WxSession(
             token=token,
             cookies=all_cookies,
-            expires_at=datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS),
+            expires_at=None,
             is_active=True,
         )
         db.session.add(ws)
@@ -321,12 +320,6 @@ class WxMpClient:
                 resp = requests.get(url, params=params, headers=headers, timeout=15)
             else:
                 resp = requests.post(url, params=params, data=data, headers=headers, timeout=15)
-
-            # Auto-extend session on successful requests
-            if resp and resp.status_code == 200:
-                ws.expires_at = datetime.utcnow() + timedelta(days=Config.WX_SESSION_DAYS)
-                db.session.commit()
-
             return resp
         except requests.exceptions.RequestException as e:
             logger.error('Request failed: %s %s - %s', method, url, e)
