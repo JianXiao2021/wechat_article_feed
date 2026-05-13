@@ -70,7 +70,3 @@ class Config:
     ARTICLE_CACHE_TTL = int(os.environ.get('ARTICLE_CACHE_TTL', 30))  # minutes
     MAX_ARTICLE_PAGES = int(os.environ.get('MAX_ARTICLE_PAGES', 3))  # pages per refresh (conservative)
 
-    # WeChat session settings
-    # Session is auto-extended on successful API calls.
-    # Use conservative value (4 days) since WeChat may expire cookies server-side.
-    WX_SESSION_DAYS = int(os.environ.get('WX_SESSION_DAYS', 4))  # session expiry in days
