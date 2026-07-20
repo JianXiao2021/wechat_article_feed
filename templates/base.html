@@ -32,6 +32,13 @@
     {% endif %}
 
     <main class="main-content">
+        {% if current_user.is_authenticated and wx_expiry and wx_expiry.is_expiring_soon and request.endpoint != 'wx_login_page' %}
+        <div id="wxExpiryBanner" style="background:#fef0f0;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+            <span style="font-size:0.8125rem;color:#f56c6c;">微信登录即将到期，过期后将无法获取文章</span>
+            <a href="{{ url_for('wx_login_page') }}" class="btn btn-small btn-primary">去登录</a>
+        </div>
+        {% endif %}
+
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="flash-messages">

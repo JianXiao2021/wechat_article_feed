@@ -26,9 +26,7 @@
         <!-- Mobile hint -->
         <div id="mobileHint" style="display:none; margin-top:12px; padding:12px 14px; background:#fdf6ec; border-radius:8px; font-size:0.75rem; color:#555; line-height:1.7; text-align:left;">
             <b>手机上如何扫码？</b><br>
-            <b>方法1（推荐）：</b>在电脑上打开本网站扫码登录，手机直接使用<br>
-            <b>方法2：</b>长按二维码 → 保存图片 → 微信扫一扫 → 右下角「相册」→ 选择图片<br>
-            <b style="color:#e6a23c;">注意：</b>微信公众平台可能要求使用摄像头扫码，方法2不一定可用
+            <b>推荐方式：</b>截图二维码后发送到电脑，在电脑上用微信打开图片扫码
         </div>
     </div>
 
@@ -51,8 +49,7 @@
     <ol style="font-size:0.75rem; color:var(--text-secondary); line-height:1.8; padding-left:20px; margin-top:8px;">
         <li>你需要有一个微信公众号（个人订阅号即可，可免费注册）</li>
         <li>点击上方「获取登录二维码」</li>
-        <li><b>电脑端</b>：直接用微信扫描二维码</li>
-        <li><b>手机端</b>：建议先在电脑上扫码登录，登录后长时间有效</li>
+        <li><b>扫码方式</b>：截图二维码后发送到电脑/另一部手机，在电脑上用微信打开图片扫码</li>
         <li>登录成功后去「关注」页面搜索并关注公众号</li>
         <li>回到「信息流」页面点击「刷新文章」获取最新文章</li>
     </ol>
@@ -82,36 +79,65 @@ async function checkWxStatus() {
         const el = document.getElementById('wxStatus');
         if (data.logged_in) {
             let html = '<span class="status-badge success">微信已登录</span>';
-            if (data.session_info && data.session_info.expires_at) {
-                const exp = new Date(data.session_info.expires_at);
-                const now = new Date();
-                const daysLeft = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
-                html += `<p style="font-size:0.75rem;color:var(--text-secondary);margin-top:8px;">会话有效至: ${exp.toLocaleString('zh-CN')}`;
-                if (daysLeft <= 3) {
-                    html += ` <span style="color:var(--danger);font-weight:500;">（即将过期！）</span>`;
-                }
-                html += `</p>`;
-                html += `<button class="btn btn-small btn-outline" style="margin-top:8px;" onclick="refreshSession()">延长会话</button>`;
+            const info = data.session_info || {};
+            const remaining = info.remaining_seconds;
+            if (remaining != null) {
+                html += `<div id="wxExpiryCountdown" style="margin-top:8px;font-size:0.8125rem;color:var(--text-secondary);">剩余登录时间：<b>${formatRemaining(remaining)}</b></div>`;
             }
             el.innerHTML = html;
             document.getElementById('loginBtn').textContent = '重新登录（刷新二维码）';
+            startExpiryCountdown(info.expires_at);
         } else {
             el.innerHTML = '<span class="status-badge waiting">微信未登录</span>';
             document.getElementById('loginBtn').textContent = '获取登录二维码';
+            stopExpiryCountdown();
         }
-    } catch (e) {
+	    } catch (e) {
         console.error(e);
     }
 }
 
-async function refreshSession() {
-    try {
-        const resp = await fetch('/api/wx/refresh_session', {method: 'POST'});
-        const data = await resp.json();
-        showToast(data.msg);
-        checkWxStatus();
-    } catch (e) {
-        showToast('刷新失败');
+// ---- Real-time expiry countdown ----
+let expiryTimer = null;
+let expiryAt = null;
+
+function formatRemaining(seconds) {
+    if (seconds <= 0) return '已过期';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const parts = [];
+    if (d > 0) parts.push(d + '天');
+    parts.push(h + '小时');
+    parts.push(m + '分钟');
+    return parts.join('');
+}
+
+function startExpiryCountdown(expiresAtIso) {
+    stopExpiryCountdown();
+    if (!expiresAtIso) return;
+    expiryAt = new Date(expiresAtIso + 'Z').getTime();  // server stores UTC
+    updateExpiryDisplay();
+    expiryTimer = setInterval(updateExpiryDisplay, 60000);  // refresh every minute
+}
+
+function stopExpiryCountdown() {
+    if (expiryTimer) {
+        clearInterval(expiryTimer);
+        expiryTimer = null;
+    }
+    expiryAt = null;
+}
+
+function updateExpiryDisplay() {
+    const el = document.getElementById('wxExpiryCountdown');
+    if (!el || !expiryAt) return;
+    const remaining = Math.max(0, Math.floor((expiryAt - Date.now()) / 1000));
+    el.innerHTML = '剩余登录时间：<b>' + formatRemaining(remaining) + '</b>';
+    // Change color when close to expiry
+    if (remaining <= 24 * 3600) {
+        el.style.color = '#f56c6c';
+        el.style.fontWeight = '500';
     }
 }
 

@@ -44,6 +44,29 @@ login_manager.login_view = 'login'
 from wx_proxy import wx_client
 
 
+@app.context_processor
+def inject_wx_expiry():
+    """Inject WeChat session expiry info into all templates.
+
+    Only populated when the user is authenticated and WeChat is logged in,
+    so the top banner can render on every page without each view needing
+    to pass it explicitly.
+    """
+    if not current_user.is_authenticated:
+        return {}
+    if not wx_client.is_logged_in:
+        return {}
+    info = wx_client.session_info
+    if not info:
+        return {}
+    return {
+        'wx_expiry': {
+            'remaining_seconds': info.get('remaining_seconds'),
+            'is_expiring_soon': info.get('is_expiring_soon', False),
+        }
+    }
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))

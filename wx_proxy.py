@@ -9,10 +9,17 @@ import logging
 import re
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import Config
 from models import db, WxSession
+
+# WeChat MP sessions typically expire ~4 days after login.
+# Used as the estimated expiry written to DB; actual validity is still
+# verified lazily by API calls (200003 → deactivate).
+WX_SESSION_TTL = timedelta(days=4)
+# Show expiry warning banner when less than this remains.
+WX_EXPIRY_WARNING_THRESHOLD = timedelta(days=1)
 
 logger = logging.getLogger('wx_proxy')
 
@@ -58,9 +65,22 @@ class WxMpClient:
         ws = self._get_active_session()
         if not ws:
             return None
+        # Use stored expires_at if present; otherwise estimate from created_at
+        # so users with legacy sessions still see a meaningful countdown.
+        expires_at = ws.expires_at
+        if not expires_at and ws.created_at:
+            expires_at = ws.created_at + WX_SESSION_TTL
+        now = datetime.utcnow()
+        remaining_seconds = None
+        is_expiring_soon = False
+        if expires_at:
+            remaining_seconds = max(0, int((expires_at - now).total_seconds()))
+            is_expiring_soon = remaining_seconds <= WX_EXPIRY_WARNING_THRESHOLD.total_seconds()
         return {
             'created_at': ws.created_at.isoformat() if ws.created_at else None,
-            'expires_at': ws.expires_at.isoformat() if ws.expires_at else None,
+            'expires_at': expires_at.isoformat() if expires_at else None,
+            'remaining_seconds': remaining_seconds,
+            'is_expiring_soon': is_expiring_soon,
         }
 
     def validate_session(self):
@@ -279,11 +299,12 @@ class WxMpClient:
         # Deactivate old sessions
         WxSession.query.filter_by(is_active=True).update({'is_active': False})
 
-        # Save new session (actual validity depends on WeChat server)
+        # Save new session. Estimated expiry is WX_SESSION_TTL from now;
+        # actual validity is still determined lazily by API calls.
         ws = WxSession(
             token=token,
             cookies=all_cookies,
-            expires_at=None,
+            expires_at=datetime.utcnow() + WX_SESSION_TTL,
             is_active=True,
         )
         db.session.add(ws)
