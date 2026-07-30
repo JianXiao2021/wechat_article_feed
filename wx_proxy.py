@@ -27,6 +27,14 @@ USER_AGENT = Config.WX_MP_USER_AGENT
 MP_BASE = 'https://mp.weixin.qq.com'
 
 
+class FreqControlError(Exception):
+    """Raised when WeChat returns freq control (ret=200013).
+
+    Recovery typically requires waiting ~1 hour and re-scanning to log in.
+    """
+    pass
+
+
 class WxMpClient:
     """Client for interacting with the WeChat MP platform."""
 
@@ -411,7 +419,10 @@ class WxMpClient:
         return data.get('list', [])
 
     def get_article_list(self, fakeid, begin=0, size=10):
-        """Get published articles for an account."""
+        """Get published articles for an account.
+
+        Raises FreqControlError if WeChat returns freq control (200013).
+        """
         ws = self._get_active_session()
         if not ws:
             return None
@@ -442,16 +453,27 @@ class WxMpClient:
             logger.error('get_article_list non-json response: %s', resp.status_code)
             return None
 
-        if data.get('base_resp', {}).get('ret') == 200003:
+        ret = data.get('base_resp', {}).get('ret')
+
+        if ret == 200003:
             logger.warning('get_article_list: session expired (200003)')
             ws.is_active = False
             db.session.commit()
             return None
 
-        if data.get('base_resp', {}).get('ret') != 0:
-            logger.warning('get_article_list error: %s', data.get('base_resp'))
+        if ret == 200013:
+            logger.warning(
+                'get_article_list: freq control (200013) for fakeid=%s — '
+                'need to wait ~1h and re-login', fakeid)
+            raise FreqControlError(
+                '微信接口频率受限，请等待约1小时后重新扫码登录公众号')
+
+        if ret != 0:
+            logger.warning('get_article_list error: ret=%s err=%s',
+                           ret, data.get('base_resp', {}).get('err_msg', ''))
             return None
 
+        # Success — parse response
         try:
             publish_page = json.loads(data.get('publish_page', '{}'))
             publish_list = publish_page.get('publish_list', [])

@@ -24,11 +24,27 @@ from config import Config
 from models import db, User, Account, AccountGroup, Subscription, Article, ReadHistory
 
 # ---- Logging setup ----
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-)
+# Works under both `python app.py` (console) and gunicorn (file).
+# Under gunicorn, we attach our loggers to gunicorn.error's handlers so all
+# application logs land in the --error-logfile (server.log on Termux).
+_LOG_FORMAT = '[%(asctime)s] %(levelname)s %(name)s: %(message)s'
+_LOG_DATEFMT = '%Y-%m-%d %H:%M:%S'
+
+_gunicorn_error = logging.getLogger('gunicorn.error')
+if _gunicorn_error.handlers:
+    # Running under gunicorn — reuse its file handlers for our loggers
+    for _name in ('app', 'wx_proxy', 'werkzeug', 'config'):
+        _lg = logging.getLogger(_name)
+        _lg.handlers = list(_gunicorn_error.handlers)
+        _lg.setLevel(logging.INFO)
+        _lg.propagate = False
+else:
+    # Direct `python app.py` execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format=_LOG_FORMAT,
+        datefmt=_LOG_DATEFMT,
+    )
 logger = logging.getLogger('app')
 
 app = Flask(__name__)
@@ -41,7 +57,7 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 # Import wx_proxy after app setup so DB is available
-from wx_proxy import wx_client
+from wx_proxy import wx_client, FreqControlError
 
 
 @app.context_processor
@@ -553,10 +569,20 @@ def api_feed_refresh():
                         'account_id': sub.account.id,
                         'next_begin': Config.ARTICLE_PAGE_SIZE,
                     })
+        except FreqControlError:
+            logger.warning('Feed sync aborted: freq control on %s', sub.account.nickname)
+            return jsonify({
+                'success': False,
+                'freq_control': True,
+                'msg': '微信接口频率受限，请等待约1小时后重新扫码登录公众号',
+                'fetched': fetched,
+                'errors': errors,
+                'skipped': skipped,
+            })
         except Exception:
             logger.exception('Error fetching articles for %s', sub.account.nickname)
             errors += 1
-        time.sleep(1)  # Rate limit
+        time.sleep(3)  # Rate limit between accounts
 
     logger.info('Feed sync: user=%s group=%s fetched=%d errors=%d skipped=%d backfill=%d',
                 current_user.username, group_id, fetched, errors, skipped, len(backfill_accounts))
@@ -603,6 +629,13 @@ def api_feed_refresh_account():
             'skipped': skipped,
             'backfill': {'account_id': account_id,
                          'next_begin': Config.ARTICLE_PAGE_SIZE} if backfill_needed else None,
+        })
+    except FreqControlError:
+        logger.warning('Refresh account aborted: freq control on %s', account.nickname)
+        return jsonify({
+            'success': False,
+            'freq_control': True,
+            'msg': '微信接口频率受限，请等待约1小时后重新扫码登录公众号',
         })
     except Exception:
         logger.exception('Error refreshing account %s', account.nickname)
@@ -653,9 +686,18 @@ def api_feed_backfill():
                     'account_id': account_id,
                     'next_begin': begin + Config.ARTICLE_PAGE_SIZE,
                 })
+        except FreqControlError:
+            logger.warning('Backfill aborted: freq control on %s', account.nickname)
+            return jsonify({
+                'success': False,
+                'freq_control': True,
+                'msg': '微信接口频率受限，请等待约1小时后重新扫码登录公众号',
+                'fetched': fetched,
+                'backfill_accounts': updated_backfill,
+            })
         except Exception:
             logger.exception('Error backfilling articles for %s', account.nickname)
-        time.sleep(1)
+        time.sleep(3)
 
     logger.info('Feed backfill: user=%s fetched=%d remaining=%d',
                 current_user.username, fetched, len(updated_backfill))
@@ -967,7 +1009,7 @@ def _fetch_articles_for_account(account, begin=0, max_pages=1, force=False):
             break
 
         offset += size
-        time.sleep(1)  # Rate limit
+        time.sleep(3)  # Rate limit between pages
 
     # Update last fetch time
     account.last_fetch_time = datetime.utcnow()

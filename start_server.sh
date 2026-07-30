@@ -40,10 +40,14 @@ fi
 echo ">>> 正在启动微信文章阅读器..."
 
 # 使用 gunicorn 后台启动，日志写入文件
+# --capture-output: 将 worker 的 stdout/stderr 也重定向到 error-logfile
+# --log-level info: 确保 INFO 及以上级别的日志都被记录
 nohup gunicorn \
     --bind 127.0.0.1:5000 \
     --workers 2 \
     --timeout 120 \
+    --log-level info \
+    --capture-output \
     --access-logfile "$LOG_FILE" \
     --error-logfile "$LOG_FILE" \
     app:app > "$LOG_FILE" 2>&1 &

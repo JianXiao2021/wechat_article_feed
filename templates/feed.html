@@ -38,6 +38,7 @@
 {% block extra_scripts %}
 <script>
 // ---- State ----
+const WX_LOGGED_IN = {{ wx_logged_in | tojson }};
 let currentGroupId = null;
 let nextCursor = null;
 let isLoading = false;
@@ -140,8 +141,10 @@ async function loadGroups() {
         // Activate first group
         currentGroupId = groups[0].id;
         await loadFeed();
-        // Auto-sync in background
-        syncFeed();
+        // Auto-sync in background (only if WeChat is logged in)
+        if (WX_LOGGED_IN) {
+            syncFeed();
+        }
     } catch (e) {
         console.error('Failed to load groups', e);
     }
@@ -163,7 +166,9 @@ function switchGroup(groupId, tabEl) {
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('loadMoreSection').style.display = 'none';
 
-    loadFeed().then(() => syncFeed());
+    loadFeed().then(() => {
+        if (WX_LOGGED_IN) syncFeed();
+    });
 }
 
 // ---- Feed Loading (from DB cache) ----
@@ -236,6 +241,7 @@ function staggeredRefresh(accounts, force, syncGroupId) {
     let totalFetched = 0;
     let totalSkipped = 0;
     let hasNewArticles = false;
+    let freqControlHit = false;
     const indicator = document.getElementById('syncIndicator');
 
     return new Promise(resolve => {
@@ -246,14 +252,15 @@ function staggeredRefresh(accounts, force, syncGroupId) {
                 indicator.textContent = `同步中 ${doneCount - totalSkipped}/${accounts.length - totalSkipped}...`;
             }
             if (doneCount >= accounts.length) {
-                resolve({totalFetched, totalSkipped});
+                resolve({totalFetched, totalSkipped, freqControlHit});
             }
         }
 
         accounts.forEach((acct, i) => {
             // Stagger: request i fires at i*1000 ms
+            // If freq control was already hit, skip remaining requests
             setTimeout(() => {
-                if (syncGroupId !== currentGroupId) { onDone(); return; }
+                if (syncGroupId !== currentGroupId || freqControlHit) { onDone(); return; }
 
                 fetch('/api/feed/refresh_account', {
                     method: 'POST',
@@ -263,6 +270,11 @@ function staggeredRefresh(accounts, force, syncGroupId) {
                 .then(r => r.json())
                 .then(async data => {
                     if (syncGroupId !== currentGroupId) return;
+                    if (data.freq_control) {
+                        showToast(data.msg, 5000);
+                        // Stop all remaining staggered requests
+                        freqControlHit = true;
+                    }
                     if (data.skipped) totalSkipped++;
                     if (data.backfill) backfillAccounts.push(data.backfill);
                     if (data.fetched > 0) {
@@ -286,7 +298,7 @@ function staggeredRefresh(accounts, force, syncGroupId) {
 
 // ---- Auto Sync (background, on page load / tab switch) ----
 async function syncFeed() {
-    if (isSyncing || !currentGroupId) return;
+    if (!WX_LOGGED_IN || isSyncing || !currentGroupId) return;
     isSyncing = true;
 
     const indicator = document.getElementById('syncIndicator');
@@ -298,8 +310,10 @@ async function syncFeed() {
         const accounts = await acctResp.json();
         if (!accounts.length) { indicator.style.display = 'none'; isSyncing = false; return; }
 
-        const {totalFetched} = await staggeredRefresh(accounts, false, currentGroupId);
-        if (totalFetched > 0) {
+        const {totalFetched, freqControlHit} = await staggeredRefresh(accounts, false, currentGroupId);
+        if (freqControlHit) {
+            showToast('微信接口频率受限，请等待约1小时后重新扫码登录公众号', 5000);
+        } else if (totalFetched > 0) {
             showToast(`获取了 ${totalFetched} 篇新文章`);
         }
     } catch (e) {
@@ -332,6 +346,10 @@ async function doBackfill() {
 
 // ---- Manual Refresh (force=true, bypasses cooldown) ----
 async function refreshFeed() {
+    if (!WX_LOGGED_IN) {
+        showToast('微信未登录，请先扫码登录');
+        return;
+    }
     if (isSyncing || !currentGroupId) return;
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
@@ -347,12 +365,16 @@ async function refreshFeed() {
         const acctResp = await fetch(`/api/accounts?group_id=${currentGroupId}`);
         const accounts = await acctResp.json();
 
-        const {totalFetched, totalSkipped} = await staggeredRefresh(accounts, true, currentGroupId);
+        const {totalFetched, totalSkipped, freqControlHit} = await staggeredRefresh(accounts, true, currentGroupId);
 
         totalNewArticles = totalFetched;
-        let msg = totalFetched > 0 ? `获取了 ${totalFetched} 篇新文章` : '没有新文章';
-        if (totalSkipped > 0) msg += `（${totalSkipped}个使用缓存）`;
-        showToast(msg);
+        if (freqControlHit) {
+            showToast('微信接口频率受限，请等待约1小时后重新扫码登录公众号', 5000);
+        } else {
+            let msg = totalFetched > 0 ? `获取了 ${totalFetched} 篇新文章` : '没有新文章';
+            if (totalSkipped > 0) msg += `（${totalSkipped}个使用缓存）`;
+            showToast(msg);
+        }
     } catch (e) {
         showToast('刷新失败');
     } finally {
